@@ -1,0 +1,21 @@
+# exclude PyCharm project settings and virtual environments
+.idea/
+.vscode/
+venv/
+conda/
+wandb/
+demm/
+
+# exclude experiment scripts
+*.sh
+
+# exclude cached/compiled code
+__pycache__/
+.ipynb_checkpoints/
+*.py[cod]
+*$py.class
+
+# exclude data files
+*.DS_Store
+*.zip
+*.pickle
