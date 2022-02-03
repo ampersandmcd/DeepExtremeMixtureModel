@@ -94,7 +94,7 @@ class Experiment:
         self.final_test_pred = None
 
         # Set the threshold
-        thresh = np.nanquantile(m.tonp(self.y), q=quantile)
+        thresh = np.nanquantile(m.to_np(self.y), q=quantile)
         self.threshes = torch.ones_like(self.y, device=self.device) * thresh
 
         # Make CNN
@@ -188,7 +188,7 @@ class Experiment:
         quantile.
         """
         if self.variable_thresh:
-            return m.totensor(self.rand_threshes)
+            return m.to_tensor(self.rand_threshes)
         else:
             return self.threshes
 
@@ -243,12 +243,12 @@ class Experiment:
                 loss[0].backward()  # loss[0] is the loss used for training other elements of loss are other
                 # evaluation metrics not intended to be used for training.
 
-                if np.isnan(m.tonp(loss[0])) or np.isinf(m.tonp(loss[0])):
+                if np.isnan(m.to_np(loss[0])) or np.isinf(m.to_np(loss[0])):
                     assert False
                 self.optim.step()
                 self.optim.zero_grad()
-            loss[0] = m.tonp(loss[0])
-            preds.append(np.concatenate(m.tonp(pred), axis=1)), losses.append(loss)
+            loss[0] = m.to_np(loss[0])
+            preds.append(np.concatenate(m.to_np(pred), axis=1)), losses.append(loss)
         preds = np.concatenate(preds, axis=0)
         losses = Experiment._avg_losses(losses)
         return preds, losses
@@ -261,7 +261,7 @@ class Experiment:
         pred - tensor, tensor of mixture model parameters
         threshes - tensor, thresholds
         """
-        pred = utils.to_stats(m.totensor(pred))
+        pred = utils.to_stats(m.to_tensor(pred))
         return np.array(self.model_object.compute_metrics(y, pred, threshes))
 
     def forward_eval(self, data, threshes, train, do_mc):
@@ -299,9 +299,9 @@ class Experiment:
             self.train_losses.append(train_losses)
             self.val_losses.append(val_losses)
             self.test_losses.append(test_losses)
-            self.final_train_pred = m.tonp(train_pred)
-            self.final_val_pred = m.tonp(val_pred)
-            self.final_test_pred = m.tonp(test_pred)
+            self.final_train_pred = m.to_np(train_pred)
+            self.final_val_pred = m.to_np(val_pred)
+            self.final_test_pred = m.to_np(test_pred)
 
             if self.best_val_loss is None or val_losses[0] < self.best_val_loss[0]:
                 print('best results updated')
@@ -309,9 +309,9 @@ class Experiment:
                 self.best_train_loss = train_losses
                 self.best_val_loss = val_losses
                 self.best_test_loss = test_losses
-                self.best_train_pred = m.tonp(train_pred)
-                self.best_val_pred = m.tonp(val_pred)
-                self.best_test_pred = m.tonp(test_pred)
+                self.best_train_pred = m.to_np(train_pred)
+                self.best_val_pred = m.to_np(val_pred)
+                self.best_test_pred = m.to_np(test_pred)
 
             print(epoch)
             print('train losses: ', train_losses)

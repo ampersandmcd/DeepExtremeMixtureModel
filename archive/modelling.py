@@ -283,7 +283,7 @@ def all_constraints(binaries, gpd_stats, main_stats, maxis, continuous_evt, main
     return binaries, gpd_stats, main_stats
 
 
-def totensor(a):
+def to_tensor(a):
     """
     Converts a numpy array or scalar to a tensor
     """
@@ -294,7 +294,7 @@ def totensor(a):
         return torch.tensor(a, device=device, dtype=torch.float64)
 
 
-def tonp(a):
+def to_np(a):
     """
     Converts a tensor or list of tensor to a numpy array or list of numpy arrays respectively 
     """
@@ -393,7 +393,7 @@ def lognormal(samples, mu, var):
     """
     samples[samples == 0] += 10  # this is a janky way of avoiding nans. You can add any positive value here
     # without affecting the computation.
-    first_term = -torch.log(samples) - 0.5 * torch.log(var) - 0.5 * torch.log(totensor(2 * 3.14159274))
+    first_term = -torch.log(samples) - 0.5 * torch.log(var) - 0.5 * torch.log(to_tensor(2 * 3.14159274))
     second_term = -((torch.log(samples) - mu) ** 2 / (2 * var))
     return first_term + second_term
 

@@ -86,7 +86,7 @@ class STModel:
             cur_raw = self.model(x, test=True)
         else:
             cur_raw = self.model(x)
-        if np.isnan(m.tonp(cur_raw)).any():
+        if np.isnan(m.to_np(cur_raw)).any():
             print('nans encountered')
         bin_pred, gpd_pred, norm_pred = self._to_stats(cur_raw, threshes)
         return bin_pred, gpd_pred, norm_pred
@@ -126,7 +126,7 @@ class STModel:
         mse_loss = self.compute_mse(y, pred, threshes)
 
         loss = predicted_llks + self.mean_multiplier * mse_loss + (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()) )
-        return loss, m.tonp(predicted_llks), m.tonp(mse_loss)
+        return loss, m.to_np(predicted_llks), m.to_np(mse_loss)
     
     def compute_metrics(self, y, pred, threshes):
         """
@@ -156,7 +156,7 @@ class STModel:
         zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr = self.compute_class_metrics(y, pred, threshes)
         
         loss = predicted_llks + self.mean_multiplier * mse_loss + (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()) )
-        return m.tonp(loss), m.tonp(predicted_llks), m.tonp(mse_loss), zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr
+        return m.to_np(loss), m.to_np(predicted_llks), m.to_np(mse_loss), zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr
 
     def compute_brier_scores(self, y, pred, threshes):
         """
@@ -172,9 +172,9 @@ class STModel:
         excess_brier - scalar, brier score for excess class
         """
         # Compute true class labels
-        tru_zero = m.tonp((y == 0) * 1.)
-        tru_excess = m.tonp((y > threshes) * 1.)
-        tru_moderate = m.tonp(1 - tru_zero - tru_excess)
+        tru_zero = m.to_np((y == 0) * 1.)
+        tru_excess = m.to_np((y > threshes) * 1.)
+        tru_moderate = m.to_np(1 - tru_zero - tru_excess)
         
         # Compute predicted probabilities
         pred_zero, pred_moderate, pred_excess = self.compute_all_probs(pred, threshes, aslist=True)
@@ -252,7 +252,7 @@ class STModel:
         bin_pred - array, probability of 0 rainfall
         """
         bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
-        return m.tonp(m.tonp(bin_pred[:, 0]))
+        return m.to_np(m.to_np(bin_pred[:, 0]))
     
     def compute_nonzero_prob(self, pred):
         """
@@ -263,7 +263,7 @@ class STModel:
         Returns:
         bin_pred - array, probability of non-zero rainfall
         """
-        return m.tonp(1 - self.compute_zero_prob(pred))
+        return m.to_np(1 - self.compute_zero_prob(pred))
     
     def compute_moderate_prob(self, pred, threshes):
         """
@@ -274,7 +274,7 @@ class STModel:
         Returns:
         bin_pred - array, probability of non-zero non-excess rainfall
         """
-        return m.tonp(1 - self.compute_zero_prob(pred) - self.compute_excess_prob(pred, threshes))
+        return m.to_np(1 - self.compute_zero_prob(pred) - self.compute_excess_prob(pred, threshes))
             
     def compute_excess_prob(self, pred, threshes):
         """
@@ -286,7 +286,7 @@ class STModel:
         bin_pred - array, probability of excess rainfall
         """
         bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
-        return m.tonp((1 - m.all_cdf(threshes, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), threshes, self.moderate_func)))
+        return m.to_np((1 - m.all_cdf(threshes, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), threshes, self.moderate_func)))
 
     def compute_llk(self, y, pred, threshes):
         """
