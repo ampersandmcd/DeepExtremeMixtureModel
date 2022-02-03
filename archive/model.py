@@ -238,7 +238,7 @@ class STModel:
 
         acc = utils.accuracy(tru_labels, pred_labels)
         f1_micro, f1_macro = utils.f1(tru_labels, pred_labels)
-        auc_macro_ovo, auc_macro_ovr = utils.auc(tru_labels, np.stack(pred_probs, axis=0) )
+        auc_macro_ovo, auc_macro_ovr = utils.auc(tru_labels, np.stack(pred_probs, axis=0))
         zero_brier, moderate_brier, excess_brier = self.compute_brier_scores(y, pred, threshes)
         return zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr
         

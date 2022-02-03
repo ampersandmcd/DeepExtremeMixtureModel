@@ -142,7 +142,7 @@ class Experiment:
             if self.rand_threshes is None:
                 # Saving an array of random thresholds and shuffling it periodically is much
                 # faster than generating a new array of random thresholds.
-                with open('rand_thresholds.pickle', 'rb') as f:
+                with open('../data/rand_thresholds.pickle', 'rb') as f:
                     self.rand_threshes = pickle.load(f).reshape(
                         self.y.shape)  # random threshes have same shape as target
             self.rand_threshes = np.random.permutation(self.rand_threshes)
