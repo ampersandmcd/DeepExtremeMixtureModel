@@ -19,16 +19,15 @@ import model as m
 
 class NumpyDataset(Dataset):
 
-    def __init__(self, x, y, threshes):
+    def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.threshes = threshes
 
     def __len__(self):
         return len(self.x)
 
     def __getitem__(self, i):
-        return {"x": self.x[i], "y": self.y[i], "threshes": self.threshes[i]}
+        return {"x": self.x[i], "y": self.y[i]}
 
 
 def split_var(x):

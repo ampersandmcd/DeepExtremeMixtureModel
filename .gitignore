@@ -5,6 +5,7 @@ venv/
 conda/
 wandb/
 demm/
+notes/
 
 # exclude experiment scripts
 *.sh

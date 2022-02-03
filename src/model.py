@@ -13,19 +13,25 @@ import util
 
 class SpatiotemporalLightningModule(pl.LightningModule):
 
-    def __init__(self, st_model, seed, lr, n_epoch):
+    def __init__(self, st_params, cnn_params, seed, lr, n_epoch):
         super().__init__()
         self.save_hyperparameters()
-        self.st_model = st_model
+        self.st_params = st_params
+        self.cnn_params = cnn_params
         self.seed = seed
         self.lr = lr
         self.n_epoch = n_epoch
+
+        # build 3D CNN backbone and spatiotemporal model
+        cnn = make_cnn(**cnn_params).to(get_device())
+        st_model = SpatiotemporalModel(model=cnn, **st_params).to(get_device())
+        self.st_model = st_model
 
     def training_step(self, batch, batch_idx):
         self.train()
         x = batch["x"].type(torch.FloatTensor).to(self.device)
         y = batch["y"].type(torch.FloatTensor).to(self.device)
-        if self.variable_thresh:
+        if self.st_model.variable_thresh:
             # generate random thresholds in [0.5, 0.95] and augment predictors
             threshes = 0.45 * torch.rand_like(y) + 0.5
             x = torch.cat([x, threshes[:, np.newaxis].repeat(1, 1, x.shape[2], 1, 1)], axis=1)
@@ -34,15 +40,17 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
         pred = self.st_model.pred_stats(x, threshes)
-        loss = self.st_model.compute_losses(pred, y, threshes)
+        loss, nll_loss, mse_loss = self.st_model.compute_losses(pred, y, threshes)
         self.log("t_loss", loss, prog_bar=True)
+        self.log("t_nll_loss", nll_loss, prog_bar=True)
+        self.log("t_mse_loss", mse_loss, prog_bar=True) # t for train
         return loss
 
     def validation_step(self, batch, batch_idx):
         self.eval()
         x = batch["x"].type(torch.FloatTensor).to(self.device)
         y = batch["y"].type(torch.FloatTensor).to(self.device)
-        if self.variable_thresh:
+        if self.st_model.variable_thresh:
             # generate fixed threshold at test time and augment predictors
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
@@ -52,10 +60,10 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
         pred = self.st_model.pred_stats(x, threshes)
-        metrics = self.st_model.compute_metrics(pred, y, threshes)
+        metrics = to_item(self.st_model.compute_metrics(y, pred, threshes))
         return {
             "loss": metrics[0],
-            "predicted_loglik": metrics[1],
+            "nll_loss": metrics[1],
             "mse_loss": metrics[2],
             "zero_brier": metrics[3],
             "moderate_brier": metrics[4],
@@ -70,25 +78,28 @@ class SpatiotemporalLightningModule(pl.LightningModule):
     def validation_epoch_end(self, outputs):
         metric_names = outputs[0].keys()
         for metric_name in metric_names:
-            metric_mean = torch.stack([o[metric_name] for o in outputs]).mean()
-            self.log(f"v_{metric_name}", metric_mean)
+            metric_mean = np.mean([o[metric_name] for o in outputs])
+            self.log(f"v_{metric_name}", metric_mean)   # v for validation
 
     def test_step(self, batch, batch_idx):
-        raise NotImplementedError()
+        return self.validation_step(batch, batch_idx)
 
     def test_epoch_end(self, outputs):
-        raise NotImplementedError()
+        metric_names = outputs[0].keys()
+        for metric_name in metric_names:
+            metric_mean = np.mean([o[metric_name] for o in outputs])
+            self.log(f"f_{metric_name}", metric_mean)   # f for final
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.Adam(self.st_model.parameters(), lr=self.lr)
 
     def n_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
-class SpatiotemporalModel:
+class SpatiotemporalModel(nn.Module):
 
-    def __init__(self, model, use_evt, moderate_func, ymax, mean_multiplier, dropout_multiplier, continuous_evt, q):
+    def __init__(self, model, use_evt, moderate_func, ymax, mean_multiplier, dropout_multiplier, continuous_evt, variable_thresh, quantile, use_mc):
         """
         Initialize spatiotemporal model.
         Parameters:
@@ -100,8 +111,11 @@ class SpatiotemporalModel:
         dropout_multiplier - scalar, the weight for dropout regularization in Vandal et al
         continuous_evt - boolean, whether or not the mixture model's density must be continuous at 0. Setting to True
                          doesn't work well.
-        q - float in [0, 1], quantile used for EVT
+        variable_thresh - bool, whether or not the model is trained at various threshold values
+        quantile - float in [0, 1], quantile used for EVT
+        use_mc - bool, whether or not to use montecarlo dropout evaluation
         """
+        super().__init__()
         set_default_tensor_type()
         self.model = model
         self.mean_multiplier = mean_multiplier
@@ -109,10 +123,15 @@ class SpatiotemporalModel:
         self.moderate_func = moderate_func
         self.use_evt = use_evt
         self.continuous_evt = continuous_evt
-        self.quantile = q
+        self.variable_thresh = variable_thresh
+        self.quantile = quantile
+        self.use_mc = use_mc
         if self.continuous_evt:
             assert use_evt
         self.ymax = ymax
+
+    def forward(self, x, threshes):
+        return self.pred_stats(x, threshes)
 
     def effective_thresh(self, threshes):
         """
@@ -204,16 +223,16 @@ class SpatiotemporalModel:
         # I'm pretty sure this line was necessary to gpd_pred later on for debugging purposes. I don't think
         # its needed now but decided to keep it just in case.
         gpd_pred = util.split_var(gpd_pred)
-        predicted_loglik = -torch_nanmean(
+        nll_loss = -torch_nanmean(
             loglik(
                 y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), self.moderate_func
             )
         )
         mse_loss = self.compute_mse(y, pred, threshes)
 
-        loss = predicted_loglik + self.mean_multiplier * mse_loss + \
+        loss = nll_loss + self.mean_multiplier * mse_loss + \
                (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()))
-        return loss, to_np(predicted_loglik), to_np(mse_loss)
+        return loss, nll_loss, mse_loss
 
     def compute_metrics(self, y, pred, threshes):
         """
@@ -468,7 +487,7 @@ class SpatiotemporalModel:
         return bin_pred_avgs, torch.zeros_like(lognormal_stats) + 0.1, lognormal_stats
 
 
-def make_cnn(ndim, hdim, odim, ksize, padding, use_mc, variable_thresh, use_bnorm, act=None):
+def make_cnn(ndim, hdim, odim, ksize, padding, use_mc, variable_thresh, bn, act=None):
     """
     Makes pytorch CNN model.
     Parameters:
@@ -479,82 +498,15 @@ def make_cnn(ndim, hdim, odim, ksize, padding, use_mc, variable_thresh, use_bnor
     padding - tuple of ints, CNN padding
     use_mc - boolean, if True use the Vandal et al approach
     variable_thresh - boolean, if True thresholds are randomized during training
-    use_bnorm - boolean, if True use batch norm
+    bn - boolean, if True use batch norm
     act - string, represents activation function. Must be either relu or tanh
     """
     if use_mc:
-        assert not use_bnorm
+        assert not bn
         return CNNConcreteDropout(ndim, hdim, odim, ksize, padding)
     else:
-        model = CNN(ndim, hdim, odim, ksize, padding, variable_thresh, use_bnorm, act)
+        model = CNN(ndim, hdim, odim, ksize, padding, variable_thresh, bn, act)
     return model
-
-
-class CNN(nn.Module):
-
-    def __init__(self, ndim, hdim, odim, ksize, padding, variable_thresh, use_bnorm, act=None) -> None:
-        """
-        Makes pytorch CNN model.
-        Parameters:
-        ndim - int, number of input dimensions
-        hdim - int, CNN number of hidden dimensions
-        odim - int, number of outputs per location
-        ksize - tuple of ints, CNN kernel size
-        padding - tuple of ints, CNN padding
-        variable_thresh - boolean, if True thresholds are randomized during training
-        use_bnorm - boolean, if True use batch norm
-        act - string, represents activation function. Must be either relu or tanh
-        """
-        if act is None or act == 'relu':
-            non_lin = torch.nn.ReLU
-        elif act == 'tanh':
-            non_lin = torch.nn.Tanh
-        else:
-            raise ValueError("Only relu and tanh supported")
-        super().__init__()
-        self.variable_thresh = variable_thresh
-        self.cnns = torch.nn.Sequential(
-            nn.BatchNorm3d(ndim) if use_bnorm else nn.Identity(),
-            torch.nn.Conv3d(ndim, hdim, ksize, padding=padding),
-            non_lin(),
-            nn.BatchNorm3d(hdim) if use_bnorm else nn.Identity(),
-            torch.nn.Conv3d(hdim, hdim, ksize, padding=padding),
-            non_lin(),
-            nn.BatchNorm3d(hdim) if use_bnorm else nn.Identity(),
-            torch.nn.Conv3d(hdim, hdim, ksize, padding=padding),
-            non_lin(),
-            nn.BatchNorm3d(hdim) if use_bnorm else nn.Identity()
-        )
-        self.fcs = torch.nn.Sequential(
-            torch.nn.Conv3d((hdim + 1) if variable_thresh else hdim, hdim, (1, 1, 1)),
-            non_lin(),
-            nn.BatchNorm3d(hdim) if use_bnorm else nn.Identity(),
-            torch.nn.Conv3d(hdim, hdim, (1, 1, 1)),
-            non_lin(),
-            nn.BatchNorm3d(hdim) if use_bnorm else nn.Identity(),
-            torch.nn.Conv3d(hdim, odim, (1, 1, 1))
-        )
-
-    def forward(self, x: torch.Tensor, test=False) -> Tensor:
-        """
-        Parameters:
-        x - tensor, predictors
-        test - ignore this. only added so it would have a signature that's the same as
-               CNNConcreteDropout.
-        """
-        if self.variable_thresh:
-            # The next line is hardcoded standardization. It assumes thresholds
-            # are selected from a uniform distribution ranging from 0 to 0.95
-            threshes = (x[:, -1:] - 2.79) / 2.26
-            x = x[:, :-1]
-        else:
-            threshes = None
-        out = self.cnns(x)
-        if threshes is not None:
-            out = torch.cat([out, threshes[:, :, -1:]], axis=1)
-        out = self.fcs(out)
-        return out
-
 
 def concrete_regulariser(model: nn.Module) -> nn.Module:
     """Adds ConcreteDropout regularisation functionality to a nn.Module.
@@ -588,6 +540,73 @@ def concrete_regulariser(model: nn.Module) -> nn.Module:
     setattr(model, 'regularisation', regularisation)
 
     return model
+
+
+@concrete_regulariser
+class CNN(nn.Module):
+
+    def __init__(self, ndim, hdim, odim, ksize, padding, variable_thresh, bn, act=None) -> None:
+        """
+        Makes pytorch CNN model.
+        Parameters:
+        ndim - int, number of input dimensions
+        hdim - int, CNN number of hidden dimensions
+        odim - int, number of outputs per location
+        ksize - tuple of ints, CNN kernel size
+        padding - tuple of ints, CNN padding
+        variable_thresh - boolean, if True thresholds are randomized during training
+        bn - boolean, if True use batch norm
+        act - string, represents activation function. Must be either relu or tanh
+        """
+        if act is None or act == 'relu':
+            non_lin = torch.nn.ReLU
+        elif act == 'tanh':
+            non_lin = torch.nn.Tanh
+        else:
+            raise ValueError("Only relu and tanh supported")
+        super().__init__()
+        self.variable_thresh = variable_thresh
+        self.cnns = torch.nn.Sequential(
+            nn.BatchNorm3d(ndim) if bn else nn.Identity(),
+            torch.nn.Conv3d(ndim, hdim, ksize, padding=padding),
+            non_lin(),
+            nn.BatchNorm3d(hdim) if bn else nn.Identity(),
+            torch.nn.Conv3d(hdim, hdim, ksize, padding=padding),
+            non_lin(),
+            nn.BatchNorm3d(hdim) if bn else nn.Identity(),
+            torch.nn.Conv3d(hdim, hdim, ksize, padding=padding),
+            non_lin(),
+            nn.BatchNorm3d(hdim) if bn else nn.Identity()
+        )
+        self.fcs = torch.nn.Sequential(
+            torch.nn.Conv3d((hdim + 1) if variable_thresh else hdim, hdim, (1, 1, 1)),
+            non_lin(),
+            nn.BatchNorm3d(hdim) if bn else nn.Identity(),
+            torch.nn.Conv3d(hdim, hdim, (1, 1, 1)),
+            non_lin(),
+            nn.BatchNorm3d(hdim) if bn else nn.Identity(),
+            torch.nn.Conv3d(hdim, odim, (1, 1, 1))
+        )
+
+    def forward(self, x: torch.Tensor, test=False) -> Tensor:
+        """
+        Parameters:
+        x - tensor, predictors
+        test - ignore this. only added so it would have a signature that's the same as
+               CNNConcreteDropout.
+        """
+        if self.variable_thresh:
+            # The next line is hardcoded standardization. It assumes thresholds
+            # are selected from a uniform distribution ranging from 0 to 0.95
+            threshes = (x[:, -1:] - 2.79) / 2.26
+            x = x[:, :-1]
+        else:
+            threshes = None
+        out = self.cnns(x)
+        if threshes is not None:
+            out = torch.cat([out, threshes[:, :, -1:]], axis=1)
+        out = self.fcs(out)
+        return out
 
 
 class ConcreteDropout(nn.Module):
@@ -1047,21 +1066,35 @@ def to_tensor(a):
     """
     device = get_device()
     if 'int' in str(type(a)) or 'float' in str(type(a)):
-        return torch.tensor(np.array([a]), device=device, dtype=torch.float64)
+        return torch.tensor(np.array([a]), device=device)
+    elif 'tuple' in str(type(a)):
+        return tuple(torch.tensor(np.array([x]), device=device) for x in a)
     else:
-        return torch.tensor(a, device=device, dtype=torch.float64)
+        return torch.tensor(a, device=device)
 
 
 def to_np(a):
     """
     Converts a tensor or list of tensor to a numpy array or list of numpy arrays respectively 
     """
-    if 'torch' in str(type(a)):
+    if "torch" in str(type(a)):
         return a.cpu().detach().numpy()
-    if ('list' in str(type(a)) or 'tuple' in str(type(a))) and 'torch' in str(type(a[0])):
+    if ("list" in str(type(a)) or "tuple" in str(type(a))) and "torch" in str(type(a[0])):
         return [item.cpu().detach().numpy() for item in a]
     else:
         return a
+
+
+def to_item(a):
+    """
+    Converts a single-element (SE) tensor or list of SE tensor or SE numpy array or list of SE numpy array to a float
+    """
+    if "list" in str(type(a)):
+        return [x.item() for x in a]
+    elif "tuple" in str(type(a)):
+        return tuple(x.item() for x in a)
+    else:
+        return a.item()
 
 
 def gpd(raw_samples, xi, sigma):
@@ -1362,14 +1395,19 @@ def loglik(samples, gpd_stats, moderate_stats, zero_probs, excess_probs, threshe
         raise ValueError('only lognormal is supported for non-excess values')
     main_loglik[~nz_inds] = torch.zeros_like(main_loglik[~nz_inds]) / 0.  # Set all 0 values and excess values to nan
 
-    zero_loglik, nz_loglik, nthresh_loglik, main_loglik, thresh_loglik, excess_loglik = nan_transfer(samples,
-                                                                                                     zero_loglik), nan_transfer(
-        samples, nz_loglik), nan_transfer(samples, nthresh_loglik), nan_transfer(samples, main_loglik), nan_transfer(
-        samples,
-        thresh_loglik), nan_transfer(
-        samples, excess_loglik)  # Make sure nans are propogating correctly
-    total_loglik = nan_to_num(zero_loglik) + nan_to_num(nz_loglik) + nan_to_num(nthresh_loglik) + nan_to_num(
-        main_loglik) + nan_to_num(
-        thresh_loglik) + nan_to_num(excess_loglik)  # Add up all log-likelihoods
+    zero_loglik, nz_loglik, nthresh_loglik, main_loglik, thresh_loglik, excess_loglik = \
+        nan_transfer(samples, zero_loglik), \
+        nan_transfer(samples, nz_loglik), \
+        nan_transfer(samples, nthresh_loglik), \
+        nan_transfer(samples, main_loglik),\
+        nan_transfer(samples, thresh_loglik), \
+        nan_transfer(samples, excess_loglik)  # Make sure nans are propogating correctly
+    total_loglik = \
+        nan_to_num(zero_loglik) + \
+        nan_to_num(nz_loglik) + \
+        nan_to_num(nthresh_loglik) + \
+        nan_to_num(main_loglik) + \
+        nan_to_num(thresh_loglik) +\
+        nan_to_num(excess_loglik)  # Add up all log-likelihoods
     total_loglik[nan_inds] += np.nan  # Make sure nans are propogating correctly
     return total_loglik

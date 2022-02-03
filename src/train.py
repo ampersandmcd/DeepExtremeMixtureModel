@@ -6,10 +6,10 @@ import pytorch_lightning as pl
 
 import wandb
 from argparse import ArgumentParser
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-import model as m
+from model import SpatiotemporalLightningModule
 from util import NumpyDataset
 
 
@@ -67,8 +67,6 @@ if __name__ == "__main__":
     with open("../data/processed_data.pickle", "rb") as f:
         data = pickle.load(f)
     x, y = data["x"], data["y"]
-    with open('../data/rand_thresholds.pickle', 'rb') as f:
-        rand_threshes = pickle.load(f).reshape(y.shape)  # random threshes have same shape as target
     train_dataset = NumpyDataset(x[:args.n_train], y[:args.n_train])
     val_dataset = NumpyDataset(x[args.n_train:args.n_train + args.n_val], y[args.n_train:args.n_train + args.n_val])
     test_dataset = NumpyDataset(x[args.n_train + args.n_val:], y[args.n_train + args.n_val:])
@@ -76,32 +74,40 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=4)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=4)
 
-    # configure model with standard CNN backbone and mixture model wrapper
-    model = None
-    cnn_params = {"ndim": 11, "hdim": 10, "odim": 6, "ksize": (3, 3, 3), "padding": (0, 1, 1),
-                  "bn": False, "act": "relu", "variable_thresh": False, "use_mc": False}
+    # configure parameters of 3D CNN backbone and spatiotemporal model
+    cnn_params = {
+        "ndim": 11,
+        "hdim": 10,
+        "odim": 6,
+        "ksize": (3, 3, 3),
+        "padding": (0, 1, 1),
+        "bn": False,
+        "act": "relu",
+        "variable_thresh": False,
+        "use_mc": False
+    }
+    st_params = {
+        "use_evt": False,
+        "moderate_func": "lognormal",
+        "ymax": 250,
+        "mean_multiplier": args.mean_multiplier,
+        "dropout_multiplier": args.dropout_multiplier,
+        "continuous_evt": args.continuous_evt,
+        "quantile": args.quantile,
+        "variable_thresh": False,
+        "use_mc": False
+    }
+
+    # tweak parameters depending on model choice
     if args.model == "bernoulli-lognormal-gp-variable":
-        cnn_params["variable_thresh"] = True
-        cnn = m.make_cnn(**cnn_params).to(m.get_device())
-        model = m.SpatiotemporalModel(model=cnn, use_evt=True, moderate_func="lognormal", ymax=250,
-                                      mean_multiplier=args.mean_multiplier, dropout_multiplier=args.dropout_multiplier,
-                                      continuous_evt=args.continuous_evt)
+        cnn_params["variable_thresh"] = st_params["variable_thresh"] = True
+        st_params["use_evt"] = True
     elif args.model == "bernoulli-lognormal-gp-fixed":
-        cnn = m.make_cnn(**cnn_params).to(m.get_device())
-        model = m.SpatiotemporalModel(model=cnn, use_evt=True, moderate_func="lognormal", ymax=250,
-                                      mean_multiplier=args.mean_multiplier, dropout_multiplier=args.dropout_multiplier,
-                                      continuous_evt=args.continuous_evt)
+        st_params["use_evt"] = True
     elif args.model == "bernoulli-lognormal":
-        cnn = m.make_cnn(**cnn_params).to(m.get_device())
-        model = m.SpatiotemporalModel(model=cnn, use_evt=False, moderate_func="lognormal", ymax=250,
-                                      mean_multiplier=args.mean_multiplier, dropout_multiplier=args.dropout_multiplier,
-                                      continuous_evt=args.continuous_evt)
+        pass    # no modifications here
     elif args.model == "vandal":
-        cnn_params["use_mc"] = True
-        cnn = m.make_cnn(**cnn_params).to(m.get_device())
-        model = m.SpatiotemporalModel(model=cnn, use_evt=False, moderate_func="lognormal", ymax=250,
-                                      mean_multiplier=args.mean_multiplier, dropout_multiplier=args.dropout_multiplier,
-                                      continuous_evt=args.continuous_evt)
+        cnn_params["use_mc"] = st_params["use_mc"] = True
     elif args.model == "ding":
         raise NotImplementedError()
     elif args.model == "kong":
@@ -109,12 +115,16 @@ if __name__ == "__main__":
     else:
         raise ValueError()
 
+    # configure lightning module wrapper
+    lightning_module = SpatiotemporalLightningModule(st_params=st_params, cnn_params=cnn_params,
+                                                     seed=args.seed, lr=args.lr, n_epoch=args.n_epoch)
+
     # wandb logging
     wandb.init(project="demm")
     if args.wandb_name != "default":
         wandb.run.name = args.wandb_name  # continue logging on previous run
     wandb_logger = pl.loggers.WandbLogger(project="demm")
-    wandb_logger.watch(model, log="all", log_freq=10)
+    wandb_logger.watch(lightning_module, log="all", log_freq=10)
     wandb_logger.experiment.config.update(args)
 
     # trainer configuration
@@ -123,49 +133,7 @@ if __name__ == "__main__":
     trainer.callbacks.append(ModelCheckpoint(monitor="v_loss"))
 
     # train
-    trainer.fit(model, train_dataloader, val_dataloader)
+    trainer.fit(lightning_module, train_dataloader, val_dataloader)
 
     # test
-    model.eval()
-    nlls, nans, infs = [], [], []
-    for batch in test_dataloader:
-        x = batch["x"].type(torch.FloatTensor).to(model.device)
-        criterion = model.get_criterion()
-
-        # perform forward pass
-        if model.conditional_noise:
-            std_min, std_max = 1e-3, 5e-3  # set to near-zero noise for validation
-            noise = (std_max - std_min) * torch.rand_like(x[:, 0]).view(-1, 1) + std_min
-            noisy_x = x + torch.randn_like(x) * noise
-            z, delta_logp = model.forward(noisy_x, noise_level=noise)
-        else:
-            z, delta_logp = model.forward(x)
-
-        # check nans and infs
-        nan_idx = torch.all(torch.logical_or(z != z, delta_logp != delta_logp), dim=1)
-        inf_idx = torch.all(torch.logical_not(torch.logical_and(torch.isfinite(z), torch.isfinite(delta_logp))), dim=1)
-        keep_idx = torch.logical_not(torch.logical_or(nan_idx, inf_idx))
-        z, delta_logp = z[keep_idx], delta_logp[keep_idx]
-
-        # compute and save nll for mean computation
-        nll = criterion(z, delta_logp)
-        nlls.append(nll)
-
-        # save nan/inf count for later logging
-        nans.append(sum(nan_idx))
-        infs.append(sum(inf_idx))
-
-    # save and log test nll
-    test_nll = sum(nlls) / len(test_dataset)
-    wandb.log({"test_nll": test_nll})
-
-    # save and log total number of nan/inf
-    wandb.log({"test_nan": sum(nans)})
-    wandb.log({"test_inf": sum(infs)})
-
-
-    # save and log image of samples
-    x = model.sample(args.n_test_samples).detach().cpu().numpy()
-    util.pairplot(x, title=None, color=data.color)
-    wandb.log({"final_pairplot": wandb.Image(plt)})
-    plt.close()
+    trainer.test(lightning_module, test_dataloader)
