@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import utils
 import modelling as m
 
 from torch import nn

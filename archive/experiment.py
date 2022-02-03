@@ -8,7 +8,7 @@ import torch
 
 import model
 import modelling as m
-import utils
+import util
 
 
 class Experiment:
