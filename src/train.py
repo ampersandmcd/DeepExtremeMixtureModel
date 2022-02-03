@@ -59,7 +59,6 @@ if __name__ == "__main__":
     parser.add_argument("--quantile", default=0.6, type=float, help="Quantile used to define excess threshold in proposed model; used only for evaluation if variable threshold model")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
     parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
-    parser.add_argument("--max_epochs", default=50, type=int, help="Number of epochs to train for")
     parser.add_argument("--continuous_evt", default=False, type=eval, help="Whether to constrain mixture to be continuous; appealing in theory but performs poorly in practice")
     args = parser.parse_args()
 
@@ -117,7 +116,7 @@ if __name__ == "__main__":
 
     # configure lightning module wrapper
     lightning_module = SpatiotemporalLightningModule(st_params=st_params, cnn_params=cnn_params,
-                                                     seed=args.seed, lr=args.lr, max_epochs=args.max_epochs)
+                                                     seed=args.seed, lr=args.lr, n_epoch=args.max_epochs)
 
     # wandb logging
     wandb.init(project="demm")
