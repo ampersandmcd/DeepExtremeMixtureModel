@@ -41,9 +41,9 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             threshes = torch.ones_like(y) * t
         pred = self.st_model.pred_stats(x, threshes)
         loss, nll_loss, mse_loss = self.st_model.compute_losses(pred, y, threshes)
-        self.log("t_loss", loss, prog_bar=True)
-        self.log("t_nll_loss", nll_loss, prog_bar=True)
-        self.log("t_mse_loss", mse_loss, prog_bar=True) # t for train
+        self.log("t_loss", loss)
+        self.log("t_nll_loss", nll_loss)
+        self.log("t_mse_loss", mse_loss)    # t for train
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -79,7 +79,10 @@ class SpatiotemporalLightningModule(pl.LightningModule):
         metric_names = outputs[0].keys()
         for metric_name in metric_names:
             metric_mean = np.mean([o[metric_name] for o in outputs])
-            self.log(f"v_{metric_name}", metric_mean)   # v for validation
+            if "loss" in metric_name:
+                self.log(f"v_{metric_name}", metric_mean, prog_bar=True)
+            else:
+                self.log(f"v_{metric_name}", metric_mean)   # v for validation
 
     def test_step(self, batch, batch_idx):
         return self.validation_step(batch, batch_idx)
