@@ -261,7 +261,7 @@ class Experiment:
         pred - tensor, tensor of mixture model parameters
         threshes - tensor, thresholds
         """
-        pred = utils.to_stats(m.to_tensor(pred))
+        pred = util.to_stats(m.to_tensor(pred))
         return np.array(self.model_object.compute_metrics(y, pred, threshes))
 
     def forward_eval(self, data, threshes, train, do_mc):

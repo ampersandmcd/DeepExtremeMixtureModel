@@ -57,7 +57,7 @@ class STModel:
         gpd_pred - tensor, GPD parameters -- gpd_pred[:, 0] is xi and gpd_pred[:, 1] is sigma
         norm_pred - tensor, lognormal parameters -- norm_pred[:, 0] is mu, norm_pred[:, 1] is variance
         """
-        bin_pred_, gpd_pred_, norm_pred_ = utils.to_stats(cur_raw) # This is just splitting the data
+        bin_pred_, gpd_pred_, norm_pred_ = util.to_stats(cur_raw) # This is just splitting the data
         bin_pred, gpd_pred, norm_pred = m.all_constraints(
             bin_pred_, gpd_pred_, norm_pred_, torch.ones_like(gpd_pred_[:, 0], device=m.get_device())*self.ymax, self.continuous_evt, main_func=self.moderate_func, thresholds=threshes)
         # If we're not using evt then set probability of excess to 0. The weird stuff w/ relu was necessary
@@ -120,7 +120,7 @@ class STModel:
         bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
         # I'm pretty sure this line was necessary to gpd_pred later on for debugging purposes. I don't think
         # its needed now but decided to keep it just in case.
-        gpd_pred = utils.split_var(gpd_pred)
+        gpd_pred = util.split_var(gpd_pred)
         predicted_llks = -1 * m.torch_nanmean(m.llk(y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), moderate_func=self.moderate_func))
         mse_loss = self.compute_mse(y, pred, threshes)
 
@@ -178,9 +178,9 @@ class STModel:
         # Compute predicted probabilities
         pred_zero, pred_moderate, pred_excess = self.compute_all_probs(pred, threshes, aslist=True)
         
-        zero_brier = utils.brier_score(tru_zero, pred_zero)
-        moderate_brier = utils.brier_score(tru_moderate, pred_moderate)
-        excess_brier = utils.brier_score(tru_excess, pred_excess)
+        zero_brier = util.brier_score(tru_zero, pred_zero)
+        moderate_brier = util.brier_score(tru_moderate, pred_moderate)
+        excess_brier = util.brier_score(tru_excess, pred_excess)
         return zero_brier, moderate_brier, excess_brier
     
     def compute_all_probs(self, pred, threshes, aslist):
@@ -233,11 +233,11 @@ class STModel:
         """
         pred_probs = self.compute_all_probs(pred, threshes, aslist=True)
         pred_labels = self.compute_class(pred, threshes)
-        tru_labels = utils.compute_class_labels(y, threshes)
+        tru_labels = util.compute_class_labels(y, threshes)
 
-        acc = utils.accuracy(tru_labels, pred_labels)
-        f1_micro, f1_macro = utils.f1(tru_labels, pred_labels)
-        auc_macro_ovo, auc_macro_ovr = utils.auc(tru_labels, np.stack(pred_probs, axis=0))
+        acc = util.accuracy(tru_labels, pred_labels)
+        f1_micro, f1_macro = util.f1(tru_labels, pred_labels)
+        auc_macro_ovo, auc_macro_ovr = util.auc(tru_labels, np.stack(pred_probs, axis=0))
         zero_brier, moderate_brier, excess_brier = self.compute_brier_scores(y, pred, threshes)
         return zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr
         

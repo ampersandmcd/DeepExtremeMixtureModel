@@ -19,12 +19,12 @@ Training a model on one seed (i.e. one data split) takes ~4.5 minutes for a GTX 
 
 ## Files
 
-- experiment.py - This file contains the main training loop and stores experimental results (e.g. predictions, loss)
-- model.py - This helps make and evaluate predictions
-- modelling.py - This has the functions for calculating the log-likelihood and mean among many other functions
-- names.py - A file for saving important file names.
-- run_st.py - This runs experiments based on the hyperparameters saved in settings.py
-- settings.py - This contains the optimal hyperparameters for the proposed method and baselines. This is loaded by run_st.py which can then re-run the experiments.
-- utils.py - Miscellaneous utility functions including some evaluation metrics.
-- concrete_dropout.py - Important functions for concrete dropout
-- show_results.ipynb - Demonstrates how to load results after running run_st.py
+- `experiment.py` - This file contains the main training loop and stores experimental results (e.g. predictions, loss)
+- `model.py` - This helps make and evaluate predictions
+- `modelling.py` - This has the functions for calculating the log-likelihood and mean among many other functions
+- `names.py` - A file for saving important file names.
+- `run_st.py` - This runs experiments based on the hyperparameters saved in `settings.py`
+- `settings.py` - This contains the optimal hyperparameters for the proposed method and baselines. This is loaded by run_st.py which can then re-run the experiments.
+- `util.py` - Miscellaneous utility functions including some evaluation metrics.
+- `concrete_dropout.py` - Important functions for concrete dropout
+- `show_results.ipynb` - Demonstrates how to load results after running run_st.py
