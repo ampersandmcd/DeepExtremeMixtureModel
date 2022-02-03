@@ -40,10 +40,10 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
         pred = self.st_model.pred_stats(x, threshes)
-        loss, nll_loss, mse_loss = self.st_model.compute_losses(pred, y, threshes)
+        loss, nll_loss, rmse_loss = self.st_model.compute_losses(pred, y, threshes)
         self.log("t_loss", loss)
         self.log("t_nll_loss", nll_loss)
-        self.log("t_mse_loss", mse_loss)    # t for train
+        self.log("t_rmse_loss", rmse_loss)    # t for train
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -64,7 +64,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
         return {
             "loss": metrics[0],
             "nll_loss": metrics[1],
-            "mse_loss": metrics[2],
+            "rmse_loss": metrics[2],
             "zero_brier": metrics[3],
             "moderate_brier": metrics[4],
             "excess_brier": metrics[5],
@@ -110,7 +110,7 @@ class SpatiotemporalModel(nn.Module):
         use_evt - boolean, whether or not to use extreme value theory
         moderate_func - string, what density function to use for non-zero non-excess values. Must be 'lognormal'
         ymax - scalar, the max y value that must be assigned non-zero probability by the mixture model
-        mean_multiplier - scalar, the weight assigned to the MSE component of the loss function (the other component is NLK)
+        mean_multiplier - scalar, the weight assigned to the RMSE component of the loss function (the other component is NLK)
         dropout_multiplier - scalar, the weight for dropout regularization in Vandal et al
         continuous_evt - boolean, whether or not the mixture model's density must be continuous at 0. Setting to True
                          doesn't work well.
@@ -210,17 +210,17 @@ class SpatiotemporalModel(nn.Module):
 
     def compute_losses(self, pred, y, threshes):
         """
-        Computes NLK, MSE, and their weighted sum.
+        Computes NLK, RMSE, and their weighted sum.
         Parameters:
         pred - list of tensors, list of mixture model parameters
         y - tensor, target
         threshes - tensor, thresholds
 
         Returns:
-        loss - tensor, this is the weighted average of NLK and MSE. This is the loss used for training
+        loss - tensor, this is the weighted average of NLK and RMSE. This is the loss used for training
                so it can be back-propogated
         predicted_logliks - array, negative log-likelihood
-        mse_loss - array, MSE of point predictions
+        rmse_loss - array, MSE of point predictions
         """
         bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
         # I'm pretty sure this line was necessary to gpd_pred later on for debugging purposes. I don't think
@@ -231,11 +231,11 @@ class SpatiotemporalModel(nn.Module):
                 y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), self.moderate_func
             )
         )
-        mse_loss = self.compute_mse(y, pred, threshes)
+        rmse_loss = self.compute_rmse(y, pred, threshes)
 
-        loss = nll_loss + self.mean_multiplier * mse_loss + \
+        loss = nll_loss + self.mean_multiplier * rmse_loss + \
                (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()))
-        return loss, nll_loss, mse_loss
+        return loss, nll_loss, rmse_loss
 
     def compute_metrics(self, y, pred, threshes):
         """
@@ -248,7 +248,7 @@ class SpatiotemporalModel(nn.Module):
         Returns:
         loss - scalar, this is the weighted average of NLK and MSE.
         predicted_logliks - scalar, negative log-likelihood
-        mse_loss - scalar, MSE of point predictions
+        rmse_loss - scalar, MSE of point predictions
         zero_brier - scalar, brier score of 0 rainfall class
         moderate_brier - scalar, brier score for non-zero non-excess class
         excess_brier - scalar, brier score for excess class
@@ -264,15 +264,15 @@ class SpatiotemporalModel(nn.Module):
                 y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), self.moderate_func
             )
         )
-        mse_loss = self.compute_mse(y, pred, threshes)
+        rmse_loss = self.compute_rmse(y, pred, threshes)
 
         zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr = \
             self.compute_class_metrics(y, pred, threshes)
 
-        loss = predicted_loglik + self.mean_multiplier * mse_loss + \
+        loss = predicted_loglik + self.mean_multiplier * rmse_loss + \
                (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()))
         return to_np(loss), to_np(predicted_loglik), to_np(
-            mse_loss), zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr
+            rmse_loss), zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr
 
     def compute_brier_scores(self, y, pred, threshes):
         """
@@ -418,7 +418,7 @@ class SpatiotemporalModel(nn.Module):
             y[:, 0], gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), self.moderate_func
         )
 
-    def compute_mse(self, y, pred, threshes):
+    def compute_rmse(self, y, pred, threshes):
         """
         Computes MSE of point predictions
         Parameters:
@@ -429,7 +429,7 @@ class SpatiotemporalModel(nn.Module):
         bin_pred, gpd_pred, moderate_pred = self.split_pred(pred)
         point_pred = all_mean(gpd_pred, moderate_pred, bin_pred[:, 0], bin_pred[:, 1],
                               self.effective_thresh(threshes), self.moderate_func)
-        return torch_mse(y, point_pred)
+        return torch_rmse(y, point_pred)
 
     def _mc_forwards(self, x, threshes, n_forwards):
         """
@@ -844,14 +844,14 @@ def norm_cdf(vals, mu, sigma):
     return 0.5 * (1 + torch.erf((vals - mu) * sigma.reciprocal() / math.sqrt(2)))
 
 
-def torch_mse(w_nans, nonans):
+def torch_rmse(w_nans, nonans):
     """
     Computes MSE between two tensors while ignoring nans while preserving gradients
     """
     denan = torch.zeros_like(w_nans, device=get_device())
     nonan_mask = ~torch.isnan(w_nans)
     denan[nonan_mask] += w_nans[nonan_mask]
-    return torch.mean(((denan - nonans) ** 2)[nonan_mask])
+    return torch.sqrt(torch.mean(((denan - nonans) ** 2)[nonan_mask]))
 
 
 def lognorm_mean(mu, var):
