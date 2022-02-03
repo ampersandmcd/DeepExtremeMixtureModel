@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import modelling as m
+import util
 
 from torch import nn
 from concrete_dropout import concrete_regulariser, ConcreteDropout
