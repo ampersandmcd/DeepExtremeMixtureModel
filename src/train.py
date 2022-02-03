@@ -55,7 +55,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_val", default=250, type=tuple, help="Number of samples to use for validation")
     # note that n_test is implicitly defined by n - n_train - n_val
     parser.add_argument("--batch_size", default=50, type=int, help="Batch size to train with")
-    parser.add_argument("--mean_multiplier", default=1/60, type=float, help="Weight assigned to MSE loss term (complement is weight assigned to NLL term)")
+    parser.add_argument("--mean_multiplier", default=0.02, type=float, help="Weight assigned to MSE loss term (complement is weight assigned to NLL term)")
     parser.add_argument("--dropout_multiplier", default=1e-2, type=float, help="Weight assigned to dropout loss term in Vandal baseline")
     parser.add_argument("--quantile", default=0.6, type=float, help="Quantile used to define excess threshold in proposed model; used only for evaluation if variable threshold model")
     parser.add_argument("--continuous_evt", default=False, type=eval, help="Whether to constrain mixture to be continuous; appealing in theory but performs poorly in practice")
