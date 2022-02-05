@@ -39,7 +39,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             # generate fixed threshold but do not augment predictors
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
-        pred = self.st_model.pred_stats(x, threshes)
+        pred = self.st_model.compute_stats(x, threshes)
         loss, nll_loss, rmse_loss = self.st_model.compute_losses(pred, y, threshes)
         self.log("t_loss", loss)
         self.log("t_nll_loss", nll_loss)
@@ -59,7 +59,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             # generate fixed threshold at test time but do not augment predictors
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
-        pred = self.st_model.pred_stats(x, threshes)
+        pred = self.st_model.compute_stats(x, threshes)
         metrics = to_item(self.st_model.compute_metrics(y, pred, threshes))
         return {
             "loss": metrics[0],
@@ -134,7 +134,7 @@ class SpatiotemporalModel(nn.Module):
         self.ymax = ymax
 
     def forward(self, x, threshes):
-        return self.pred_stats(x, threshes)
+        return self.compute_stats(x, threshes)
 
     def effective_thresh(self, threshes):
         """
@@ -171,7 +171,7 @@ class SpatiotemporalModel(nn.Module):
             bin_pred = torch.cat([bin_pred[:, 0:1], torch.relu(-1 * torch.abs(bin_pred[:, 1:2]))], dim=1)
         return bin_pred, gpd_pred, norm_pred
 
-    def pred_stats(self, x, threshes, do_mc_true_dropout=False):
+    def compute_stats(self, x, threshes, do_mc_true_dropout=False):
         """
         Makes predictions then converts raw predictions to constrained mixture model parameters.
         Parameters:
@@ -438,7 +438,7 @@ class SpatiotemporalModel(nn.Module):
         """
         results = list()
         for _ in range(n_forwards):
-            bin_pred, gpd_pred, lognorm_pred = self.pred_stats(x, threshes)
+            bin_pred, gpd_pred, lognorm_pred = self.compute_stats(x, threshes)
             results.append(torch.cat([bin_pred, lognorm_pred], axis=1))
         preds = torch.stack(results, axis=0)
         return preds
