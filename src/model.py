@@ -31,6 +31,8 @@ class SpatiotemporalLightningModule(pl.LightningModule):
         self.train()
         x = batch["x"].type(torch.FloatTensor).to(self.device)
         y = batch["y"].type(torch.FloatTensor).to(self.device)
+
+        # choose threshold
         if self.st_model.variable_thresh:
             # generate random thresholds in [0.5, 0.95] and augment predictors
             threshes = 0.45 * torch.rand_like(y) + 0.5
@@ -39,12 +41,10 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             # generate fixed threshold but do not augment predictors
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
-        if self.st_model.use_mc:
-            # perform monte-carlo forward pass for Vandal et al.
-            pred = self.st_model.compute_mc_stats(x, threshes, self.st_model.mc_forwards)
-        else:
-            # perform standard forward pass
-            pred = self.st_model.compute_stats(x, threshes)
+
+        # apply appropriate forward pass (logic for each model type is handled in forward() definition
+        pred = self.st_model(x, threshes, test=False)
+
         loss, nll_loss, rmse_loss = self.st_model.compute_losses(pred, y, threshes)
         self.log("t_loss", loss)
         self.log("t_nll_loss", nll_loss)
@@ -55,21 +55,20 @@ class SpatiotemporalLightningModule(pl.LightningModule):
         self.eval()
         x = batch["x"].type(torch.FloatTensor).to(self.device)
         y = batch["y"].type(torch.FloatTensor).to(self.device)
+
+        # choose threshold
         if self.st_model.variable_thresh:
-            # generate fixed threshold at test time and augment predictors
-            t = np.nanquantile(to_np(y), self.st_model.quantile)
-            threshes = torch.ones_like(y) * t
+            # generate random thresholds in [0.5, 0.95] and augment predictors
+            threshes = 0.45 * torch.rand_like(y) + 0.5
             x = torch.cat([x, threshes[:, np.newaxis].repeat(1, 1, x.shape[2], 1, 1)], axis=1)
         else:
-            # generate fixed threshold at test time but do not augment predictors
+            # generate fixed threshold but do not augment predictors
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
-        if self.st_model.use_mc:
-            # perform monte-carlo forward pass for Vandal et al.
-            pred = self.st_model.compute_mc_stats(x, threshes, self.st_model.mc_forwards, test=True)
-        else:
-            # perform standard forward pass
-            pred = self.st_model.compute_stats(x, threshes, test=True)
+
+        # apply appropriate forward pass (logic for each model type is handled in forward() definition
+        pred = self.st_model(x, threshes, test=False)
+
         metrics = to_item(self.st_model.compute_metrics(y, pred, threshes))
         return {
             "loss": metrics[0],
