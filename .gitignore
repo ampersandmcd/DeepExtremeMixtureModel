@@ -20,6 +20,3 @@ __pycache__/
 *.DS_Store
 *.zip
 *.pickle
-
-# exclude quick scratch test files
-*quick.py
