@@ -866,7 +866,6 @@ def torch_rmse(w_nans_l, w_nans_r):
     nonan_mask = ~torch.isnan(w_nans_l + w_nans_r)
     denan_l[nonan_mask] += w_nans_l[nonan_mask]
     denan_r[nonan_mask] += w_nans_r[nonan_mask]
-    print(denan_l.sum(), denan_r.sum())
     return torch.sqrt(torch.mean(((denan_l - denan_r) ** 2)[nonan_mask]))
 
 
