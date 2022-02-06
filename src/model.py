@@ -39,7 +39,12 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             # generate fixed threshold but do not augment predictors
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
-        pred = self.st_model.compute_stats(x, threshes)
+        if self.st_model.use_mc:
+            # perform monte-carlo forward pass for Vandal et al.
+            pred = self.st_model.compute_mc_stats(x, threshes, self.st_model.mc_forwards)
+        else:
+            # perform standard forward pass
+            pred = self.st_model.compute_stats(x, threshes)
         loss, nll_loss, rmse_loss = self.st_model.compute_losses(pred, y, threshes)
         self.log("t_loss", loss)
         self.log("t_nll_loss", nll_loss)
@@ -59,7 +64,12 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             # generate fixed threshold at test time but do not augment predictors
             t = np.nanquantile(to_np(y), self.st_model.quantile)
             threshes = torch.ones_like(y) * t
-        pred = self.st_model.compute_stats(x, threshes)
+        if self.st_model.use_mc:
+            # perform monte-carlo forward pass for Vandal et al.
+            pred = self.st_model.compute_mc_stats(x, threshes, self.st_model.mc_forwards, test=True)
+        else:
+            # perform standard forward pass
+            pred = self.st_model.compute_stats(x, threshes, test=True)
         metrics = to_item(self.st_model.compute_metrics(y, pred, threshes))
         return {
             "loss": metrics[0],
@@ -102,7 +112,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
 
 class SpatiotemporalModel(nn.Module):
 
-    def __init__(self, model, use_evt, moderate_func, ymax, mean_multiplier, dropout_multiplier, continuous_evt, variable_thresh, quantile, use_mc):
+    def __init__(self, model, use_evt, moderate_func, ymax, mean_multiplier, dropout_multiplier, continuous_evt, variable_thresh, quantile, use_mc, mc_forwards):
         """
         Initialize spatiotemporal model.
         Parameters:
@@ -117,6 +127,7 @@ class SpatiotemporalModel(nn.Module):
         variable_thresh - bool, whether or not the model is trained at various threshold values
         quantile - float in [0, 1], quantile used for EVT
         use_mc - bool, whether or not to use montecarlo dropout evaluation
+        mc_forwards - int, number of monte carlo forward passes to use for Vandal et al
         """
         super().__init__()
         set_default_tensor_type()
@@ -129,6 +140,7 @@ class SpatiotemporalModel(nn.Module):
         self.variable_thresh = variable_thresh
         self.quantile = quantile
         self.use_mc = use_mc
+        self.mc_forwards = mc_forwards
         if self.continuous_evt:
             assert use_evt
         self.ymax = ymax
@@ -171,14 +183,13 @@ class SpatiotemporalModel(nn.Module):
             bin_pred = torch.cat([bin_pred[:, 0:1], torch.relu(-1 * torch.abs(bin_pred[:, 1:2]))], dim=1)
         return bin_pred, gpd_pred, norm_pred
 
-    def compute_stats(self, x, threshes, do_mc_true_dropout=False):
+    def compute_stats(self, x, threshes, test=False):
         """
         Makes predictions then converts raw predictions to constrained mixture model parameters.
         Parameters:
         x - tensor, predictors
         threshes - tensor, threshold
-        do_mc_true_dropout - boolean, set to True for Vandal et al at test time so we do true
-                            dropout not approximate dropout
+        test - boolean, set to True for Vandal et al at test time so we do true dropout not approximate dropout
 
         Returns:
         bin_pred - tensor, bin_pred[:, 0] is probability of 0 rainfall and bin_pred[:, 1] is probability of excess rainfall
@@ -186,10 +197,7 @@ class SpatiotemporalModel(nn.Module):
         gpd_pred - tensor, GPD parameters -- gpd_pred[:, 0] is xi and gpd_pred[:, 1] is sigma
         norm_pred - tensor, lognormal parameters -- norm_pred[:, 0] is mu, norm_pred[:, 1] is variance
         """
-        if do_mc_true_dropout:
-            cur_raw = self.model(x, test=True)
-        else:
-            cur_raw = self.model(x)
+        cur_raw = self.model(x, test)
         if np.isnan(to_np(cur_raw)).any():
             print('nans encountered')
         bin_pred, gpd_pred, norm_pred = self._to_stats(cur_raw, threshes)
@@ -431,14 +439,14 @@ class SpatiotemporalModel(nn.Module):
                               self.effective_thresh(threshes), self.moderate_func)
         return torch_rmse(y, point_pred)
 
-    def _mc_forwards(self, x, threshes, n_forwards):
+    def _mc_forwards(self, x, threshes, n_forwards, test=False):
         """
         Compute n_forwards forward passes through network with dropout and returns stacked predictions.
         Used for Vandal et al
         """
         results = list()
         for _ in range(n_forwards):
-            bin_pred, gpd_pred, lognorm_pred = self.compute_stats(x, threshes)
+            bin_pred, gpd_pred, lognorm_pred = self.compute_stats(x, threshes, test)
             results.append(torch.cat([bin_pred, lognorm_pred], axis=1))
         preds = torch.stack(results, axis=0)
         return preds
@@ -471,12 +479,12 @@ class SpatiotemporalModel(nn.Module):
         """
         return first_moment - sig ** 2 / 2
 
-    def compute_mc_stats(self, x, threshes, n_forwards):
+    def compute_mc_stats(self, x, threshes, n_forwards, test=False):
         """
         Computes mus and sigmas of zero-inflated lognormal
         Used for Vandal et al
         """
-        preds = self._mc_forwards(x, threshes, n_forwards)
+        preds = self._mc_forwards(x, threshes, n_forwards, test)
         non_zeros = 1 - preds[:, :, 0]
         mus = preds[:, :, 2]
         sigs = preds[:, :, 3] ** 0.5
@@ -510,6 +518,7 @@ def make_cnn(ndim, hdim, odim, ksize, padding, use_mc, variable_thresh, bn, act=
     else:
         model = CNN(ndim, hdim, odim, ksize, padding, variable_thresh, bn, act)
     return model
+
 
 def concrete_regulariser(model: nn.Module) -> nn.Module:
     """Adds ConcreteDropout regularisation functionality to a nn.Module.
@@ -724,7 +733,7 @@ class ConcreteDropout(nn.Module):
 
         self.p = torch.sigmoid(self.p_logit)
         if test:  # At test time we perform actual dropout rather than its concrete approximation
-            x = F.dropout3d(x, self.p, training=True)
+            x = F.dropout3d(x, self.p.item(), training=True)
         else:
             u_noise = torch.rand_like(x)
 
@@ -883,9 +892,12 @@ def all_mean(gpd_stats, moderate_stats, zero_probs, excess_probs, threshes, mode
         weighted_moderate *= (1 - zero_probs) * (1 - excess_probs)
     else:
         raise ValueError('only lognormal function is supported for mean calculations')
-    # Compute weighted mean of gpd component
-    weighted_excess = gp_mean(gpd_stats[:, 0], gpd_stats[:, 1], threshes)
-    weighted_excess *= (1 - zero_probs) * excess_probs
+    # Compute weighted mean of gpd component if we are using EVT
+    if torch.all(torch.isinf(threshes)):
+        weighted_excess = 0.     # we are not using EVT
+    else:
+        weighted_excess = gp_mean(gpd_stats[:, 0], gpd_stats[:, 1], threshes)
+        weighted_excess *= (1 - zero_probs) * excess_probs
 
     # return weighted mean
     return weighted_zero + weighted_moderate + weighted_excess

@@ -100,7 +100,8 @@ if __name__ == "__main__":
         "continuous_evt": args.continuous_evt,
         "quantile": args.quantile,
         "variable_thresh": False,
-        "use_mc": False
+        "use_mc": False,
+        "mc_forwards": 0
     }
 
     # tweak parameters depending on model choice
@@ -113,6 +114,7 @@ if __name__ == "__main__":
         pass    # no modifications here
     elif args.model == "vandal":
         cnn_params["use_mc"] = st_params["use_mc"] = True
+        st_params["mc_forwards"] = 30
     elif args.model == "ding":
         raise NotImplementedError()
     elif args.model == "kong":
