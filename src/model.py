@@ -205,6 +205,25 @@ class SpatiotemporalModel(nn.Module):
         bin_pred, gpd_pred, norm_pred = self._to_stats(cur_raw, threshes)
         return bin_pred, gpd_pred, norm_pred
 
+    def compute_mc_stats(self, x, threshes, n_forwards, test=False):
+        """
+        Computes mus and sigmas of zero-inflated lognormal
+        Used for Vandal et al
+        """
+        preds = self._mc_forwards(x, threshes, n_forwards, test)
+        non_zeros = 1 - preds[:, :, 0]
+        mus = preds[:, :, 2]
+        sigs = preds[:, :, 3] ** 0.5
+        first_m = self._first_moment(non_zeros, mus, sigs)
+        second_m = self._second_moment(non_zeros, mus, sigs)
+        final_sigs = self._get_sig(first_m, second_m)
+        final_mus = self._get_mu(first_m, final_sigs)
+
+        bin_pred_avgs = torch.mean(preds[:, :, 0:2], axis=0)
+        lognormal_stats = torch.stack([final_mus, final_sigs ** 2], axis=1)
+        return bin_pred_avgs, torch.zeros_like(lognormal_stats) + 0.1, lognormal_stats
+
+
     def split_pred(self, pred):
         """
         Just splits a list of predictions up into the constituent parts
@@ -482,24 +501,6 @@ class SpatiotemporalModel(nn.Module):
         Used for Vandal et al
         """
         return first_moment - sig ** 2 / 2
-
-    def compute_mc_stats(self, x, threshes, n_forwards, test=False):
-        """
-        Computes mus and sigmas of zero-inflated lognormal
-        Used for Vandal et al
-        """
-        preds = self._mc_forwards(x, threshes, n_forwards, test)
-        non_zeros = 1 - preds[:, :, 0]
-        mus = preds[:, :, 2]
-        sigs = preds[:, :, 3] ** 0.5
-        first_m = self._first_moment(non_zeros, mus, sigs)
-        second_m = self._second_moment(non_zeros, mus, sigs)
-        final_sigs = self._get_sig(first_m, second_m)
-        final_mus = self._get_mu(first_m, final_sigs)
-
-        bin_pred_avgs = torch.mean(preds[:, :, 0:2], axis=0)
-        lognormal_stats = torch.stack([final_mus, final_sigs ** 2], axis=1)
-        return bin_pred_avgs, torch.zeros_like(lognormal_stats) + 0.1, lognormal_stats
 
 
 def make_cnn(ndim, hdim, odim, ksize, padding, use_mc, variable_thresh, bn, act=None):

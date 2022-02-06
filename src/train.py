@@ -114,6 +114,7 @@ if __name__ == "__main__":
         pass    # no modifications here
     elif args.model == "vandal":
         cnn_params["use_mc"] = st_params["use_mc"] = True
+        cnn_params["odim"] = 4
         st_params["mc_forwards"] = 30
     elif args.model == "ding":
         raise NotImplementedError()
