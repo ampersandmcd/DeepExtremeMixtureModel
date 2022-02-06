@@ -153,14 +153,14 @@ class SpatiotemporalModel(nn.Module):
         The effective threshold is the threshold to be used by the mixture model. If we're not using EVT
         then the threshold is infinite (all non-zero values are modeled by lognormal). Note that we cannot actually
         set it to infinity, however, as that breaks the computation graph during the backward pass.
-        We find setting the value to 1000. works well, as precipitation values are much smaller than this in practice.
+        We find setting the value to 999999999. works well, as precipitation values are much smaller than this in practice.
         Parameters:
         threshes - tensor, the actual thresholds
         """
         if self.use_evt:
             return threshes
         else:
-            return torch.ones_like(threshes, device=get_device()) * 1000.
+            return torch.ones_like(threshes, device=get_device()) * 999999999.
 
     def _to_stats(self, cur_raw, threshes):
         """
@@ -439,6 +439,8 @@ class SpatiotemporalModel(nn.Module):
         bin_pred, gpd_pred, moderate_pred = self.split_pred(pred)
         point_pred = all_mean(gpd_pred, moderate_pred, bin_pred[:, 0], bin_pred[:, 1],
                               self.effective_thresh(threshes), self.moderate_func)
+        if torch.isnan(point_pred).any():
+            print("nan here")
         return torch_rmse(y, point_pred)
 
     def _mc_forwards(self, x, threshes, n_forwards, test=False):
@@ -735,7 +737,7 @@ class ConcreteDropout(nn.Module):
 
         self.p = torch.sigmoid(self.p_logit)
         if test:  # At test time we perform actual dropout rather than its concrete approximation
-            x = F.dropout3d(x, self.p.item(), training=True)
+            x = F.dropout3d(x, self.p.item(), training=True)    # keep training True to keep dropout on
         else:
             u_noise = torch.rand_like(x)
 
@@ -855,14 +857,17 @@ def norm_cdf(vals, mu, sigma):
     return 0.5 * (1 + torch.erf((vals - mu) * sigma.reciprocal() / math.sqrt(2)))
 
 
-def torch_rmse(w_nans, nonans):
+def torch_rmse(w_nans_l, w_nans_r):
     """
-    Computes MSE between two tensors while ignoring nans while preserving gradients
+    Computes RMSE between two tensors while ignoring nans while preserving gradients
     """
-    denan = torch.zeros_like(w_nans, device=get_device())
-    nonan_mask = ~torch.isnan(w_nans)
-    denan[nonan_mask] += w_nans[nonan_mask]
-    return torch.sqrt(torch.mean(((denan - nonans) ** 2)[nonan_mask]))
+    denan_l = torch.zeros_like(w_nans_l, device=get_device())
+    denan_r = torch.zeros_like(w_nans_r, device=get_device())
+    nonan_mask = ~torch.isnan(w_nans_l + w_nans_r)
+    denan_l[nonan_mask] += w_nans_l[nonan_mask]
+    denan_r[nonan_mask] += w_nans_r[nonan_mask]
+    print(denan_l.sum(), denan_r.sum())
+    return torch.sqrt(torch.mean(((denan_l - denan_r) ** 2)[nonan_mask]))
 
 
 def lognorm_mean(mu, var):
