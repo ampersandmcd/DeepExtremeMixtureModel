@@ -243,7 +243,7 @@ class SpatiotemporalModel(nn.Module):
         )
         rmse_loss = self.compute_rmse(y, pred, threshes)
 
-        loss = nll_loss + self.mean_multiplier * rmse_loss + \
+        loss = (1 - self.mean_multiplier) * nll_loss + self.mean_multiplier * rmse_loss + \
                (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()))
         return loss, nll_loss, rmse_loss
 
