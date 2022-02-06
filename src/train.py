@@ -31,7 +31,7 @@ if __name__ == "__main__":
                determined by quantile will only be used for evaluation purposes while the mixture model's threshold
                will be random.
     max_epochs - int, number of epochs to train
-    cnn_params - dictionary, contains parameters for CNN
+    model_params - dictionary, contains parameters for CNN
     lr - scalar, learning rate
     use_mc - boolean, whether or not to use monte carlo dropout. Setting to True is necessary for Vandal et al
     mc_forwards - int, number of monte carlo forward passes to use for Vandal et al
@@ -47,6 +47,7 @@ if __name__ == "__main__":
                             "bernoulli-lognormal-gp-variable",  # proposed model with variable threshold
                             "bernoulli-lognormal-gp-fixed",     # proposed model with fixed threshold
                             "bernoulli-lognormal",              # ablation of proposed model with hurdle only
+                            "deterministic-cnn",                # ablation of proposed model with deterministic preds
                             "vandal",                           # baseline from Vandal et al.
                             "ding",                             # baseline from Ding et al.
                             "kong",                             # baseline from Kong et al.
@@ -79,8 +80,8 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=4)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=4)
 
-    # configure parameters of 3D CNN backbone and spatiotemporal model
-    cnn_params = {
+    # configure parameters of model backbone (3D CNN or GRU) and spatiotemporal model
+    model_params = {
         "ndim": 11,
         "hdim": 10,
         "odim": 6,
@@ -101,30 +102,44 @@ if __name__ == "__main__":
         "quantile": args.quantile,
         "variable_thresh": False,
         "use_mc": False,
-        "mc_forwards": 0
+        "mc_forwards": 0,
+        "backbone": "cnn",
+        "deterministic": False,
     }
 
     # tweak parameters depending on model choice
     if args.model == "bernoulli-lognormal-gp-variable":
-        cnn_params["variable_thresh"] = st_params["variable_thresh"] = True
+        model_params["variable_thresh"] = st_params["variable_thresh"] = True
         st_params["use_evt"] = True
     elif args.model == "bernoulli-lognormal-gp-fixed":
         st_params["use_evt"] = True
     elif args.model == "bernoulli-lognormal":
         pass    # no modifications here
+    elif args.model == "deterministic-cnn":
+        model_params["odim"] = 1
+        st_params["deterministic"] = True
     elif args.model == "vandal":
-        cnn_params["use_mc"] = st_params["use_mc"] = True
-        cnn_params["odim"] = 4
+        model_params["use_mc"] = st_params["use_mc"] = True
         st_params["mc_forwards"] = 30
     elif args.model == "ding":
-        raise NotImplementedError()
+        st_params["backbone"] = "ding"
+        st_params["deterministic"] = True
+        model_params = {
+            "forecast_horizon": 1,
+            "ndim": (11, 29, 59),
+            "hdim": 10,
+            "odim": (1, 29, 59),
+            "window_size": 7,
+            "memory_dim": 7,
+            "context_size": 7
+        }
     elif args.model == "kong":
         raise NotImplementedError()
     else:
         raise ValueError()
 
     # configure lightning module wrapper
-    lightning_module = SpatiotemporalLightningModule(st_params=st_params, cnn_params=cnn_params,
+    lightning_module = SpatiotemporalLightningModule(st_params=st_params, model_params=model_params,
                                                      seed=args.seed, lr=args.lr, n_epoch=args.max_epochs)
 
     # wandb logging

@@ -1,4 +1,5 @@
 import pytorch_lightning as pl
+import torch
 import torch.nn.functional as F
 from torch import Tensor
 from torch import nn
@@ -8,19 +9,23 @@ from util import *
 
 class SpatiotemporalLightningModule(pl.LightningModule):
 
-    def __init__(self, st_params, cnn_params, seed, lr, n_epoch):
+    def __init__(self, st_params, model_params, seed, lr, n_epoch):
         super().__init__()
         self.save_hyperparameters()
         self.st_params = st_params
-        self.cnn_params = cnn_params
+        self.model_params = model_params
         self.seed = seed
         self.lr = lr
         self.n_epoch = n_epoch
 
-        # build 3D CNN backbone and spatiotemporal model
-        cnn = make_cnn(**cnn_params).to(get_device())
-        st_model = SpatiotemporalModel(model=cnn, **st_params).to(get_device())
-        self.st_model = st_model
+        # build model backbone and spatiotemporal wrapper
+        if st_params["backbone"] == "cnn":
+            model = make_cnn(**model_params).to(get_device())
+        elif st_params["backbone"] == "ding":
+            model = ExtremeTime2(**model_params)
+        else:
+            raise ValueError()
+        self.st_model = SpatiotemporalModel(model=model, **st_params).to(get_device())
 
     def training_step(self, batch, batch_idx):
         self.train()
@@ -43,7 +48,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
         loss, nll_loss, rmse_loss = self.st_model.compute_losses(pred, y, threshes)
         self.log("t_loss", loss)
         self.log("t_nll_loss", nll_loss)
-        self.log("t_rmse_loss", rmse_loss)    # t for train
+        self.log("t_rmse_loss", rmse_loss)  # t for train
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -87,7 +92,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             if "loss" in metric_name:
                 self.log(f"v_{metric_name}", metric_mean, prog_bar=True)
             else:
-                self.log(f"v_{metric_name}", metric_mean)   # v for validation
+                self.log(f"v_{metric_name}", metric_mean)  # v for validation
 
     def test_step(self, batch, batch_idx):
         return self.validation_step(batch, batch_idx)
@@ -96,7 +101,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
         metric_names = outputs[0].keys()
         for metric_name in metric_names:
             metric_mean = np.mean([o[metric_name] for o in outputs])
-            self.log(f"f_{metric_name}", metric_mean)   # f for final
+            self.log(f"f_{metric_name}", metric_mean)  # f for final
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.st_model.parameters(), lr=self.lr)
@@ -107,7 +112,8 @@ class SpatiotemporalLightningModule(pl.LightningModule):
 
 class SpatiotemporalModel(nn.Module):
 
-    def __init__(self, model, use_evt, moderate_func, ymax, mean_multiplier, dropout_multiplier, continuous_evt, variable_thresh, quantile, use_mc, mc_forwards):
+    def __init__(self, model, use_evt, moderate_func, ymax, mean_multiplier, dropout_multiplier, continuous_evt,
+                 variable_thresh, quantile, use_mc, mc_forwards, backbone, deterministic):
         """
         Initialize spatiotemporal model.
         Parameters:
@@ -123,6 +129,8 @@ class SpatiotemporalModel(nn.Module):
         quantile - float in [0, 1], quantile used for EVT
         use_mc - bool, whether or not to use montecarlo dropout evaluation
         mc_forwards - int, number of monte carlo forward passes to use for Vandal et al
+        backbone - str, type of model used
+        deterministic - bool, true for use with Vandal et al
         """
         super().__init__()
         set_default_tensor_type()
@@ -136,12 +144,20 @@ class SpatiotemporalModel(nn.Module):
         self.quantile = quantile
         self.use_mc = use_mc
         self.mc_forwards = mc_forwards
+        self.backbone = backbone
+        self.deterministic = deterministic
         if self.continuous_evt:
             assert use_evt
         self.ymax = ymax
 
-    def forward(self, x, threshes):
-        return self.compute_stats(x, threshes)
+    def forward(self, x, threshes, test=False):
+        if self.use_mc:
+            return self.compute_mc_stats(x, threshes, self.mc_forwards, test)
+        elif self.deterministic:
+            pred = self.model(x, test).squeeze(2)
+            return F.relu(pred)     # in deterministic precipitation prediction, all values >= 0
+        else:
+            return self.compute_stats(x, threshes, test)
 
     def effective_thresh(self, threshes):
         """
@@ -218,7 +234,6 @@ class SpatiotemporalModel(nn.Module):
         lognormal_stats = torch.stack([final_mus, final_sigs ** 2], axis=1)
         return bin_pred_avgs, torch.zeros_like(lognormal_stats) + 0.1, lognormal_stats
 
-
     def split_pred(self, pred):
         """
         Just splits a list of predictions up into the constituent parts
@@ -246,16 +261,23 @@ class SpatiotemporalModel(nn.Module):
         predicted_logliks - array, negative log-likelihood
         rmse_loss - array, MSE of point predictions
         """
-        bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
-        # I'm pretty sure this line was necessary to gpd_pred later on for debugging purposes. I don't think
-        # its needed now but decided to keep it just in case.
-        gpd_pred = split_var(gpd_pred)
-        nll_loss = -torch_nanmean(
-            loglik(
-                y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), self.moderate_func
+        if self.deterministic:
+            # deterministic model loss
+            rmse_loss = torch_rmse(y, pred)
+            nll_loss = torch.zeros_like(rmse_loss)
+        else:
+            # probabilistic model loss
+            rmse_loss = self.compute_rmse(y, pred, threshes)
+            bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
+            # I'm pretty sure this line was necessary to gpd_pred later on for debugging purposes. I don't think
+            # its needed now but decided to keep it just in case.
+            gpd_pred = split_var(gpd_pred)
+            nll_loss = -torch_nanmean(
+                loglik(
+                    y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes),
+                    self.moderate_func
+                )
             )
-        )
-        rmse_loss = self.compute_rmse(y, pred, threshes)
 
         loss = (1 - self.mean_multiplier) * nll_loss + self.mean_multiplier * rmse_loss + \
                (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()))
@@ -282,20 +304,28 @@ class SpatiotemporalModel(nn.Module):
         auc_macro_ovo - scalar, auc macro one versus one
         auc_macro_ovr - scalar, auc macro one versus all
         """
-        bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
-        predicted_loglik = -torch_nanmean(
-            loglik(
-                y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), self.moderate_func
+
+        if self.deterministic:
+            # deterministic model metrics
+            rmse_loss = torch_rmse(y, pred)
+            nll_loss = torch.zeros_like(rmse_loss)
+        else:
+            # probabilistic model metrics
+            rmse_loss = self.compute_rmse(y, pred, threshes)
+            bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
+            nll_loss = -torch_nanmean(
+                loglik(
+                    y, gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes),
+                    self.moderate_func
+                )
             )
-        )
-        rmse_loss = self.compute_rmse(y, pred, threshes)
 
         zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr = \
             self.compute_class_metrics(y, pred, threshes)
 
-        loss = predicted_loglik + self.mean_multiplier * rmse_loss + \
+        loss = nll_loss + self.mean_multiplier * rmse_loss + \
                (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()))
-        return to_np(loss), to_np(predicted_loglik), to_np(
+        return to_np(loss), to_np(nll_loss), to_np(
             rmse_loss), zero_brier, moderate_brier, excess_brier, acc, f1_micro, f1_macro, auc_macro_ovo, auc_macro_ovr
 
     def compute_brier_scores(self, y, pred, threshes):
@@ -332,9 +362,16 @@ class SpatiotemporalModel(nn.Module):
         threshes - tensor, thresholds
         aslist - boolean, if True returns results as a list of arrays if False stacks the arrays into one large array
         """
-        pred_zero = self.compute_zero_prob(pred)
-        pred_excess = self.compute_excess_prob(pred, threshes)
-        pred_moderate = self.compute_moderate_prob(pred, threshes)
+        if self.deterministic:
+            # compute hard estimates
+            pred_zero = to_np(torch.where(pred == 0, 1, 0))
+            pred_excess = to_np(torch.where(pred > threshes, 1, 0))
+            pred_moderate = to_np(1 - pred_zero - pred_excess)
+        else:
+            # compute soft estimates
+            pred_zero = self.compute_zero_prob(pred)
+            pred_excess = self.compute_excess_prob(pred, threshes)
+            pred_moderate = self.compute_moderate_prob(pred, threshes)
         if aslist:
             return pred_zero, pred_moderate, pred_excess
         else:
@@ -350,8 +387,12 @@ class SpatiotemporalModel(nn.Module):
         Returns:
         labels - array, predicted class labels
         """
-        probs = self.compute_all_probs(pred, threshes, aslist=False)
-        labels = np.argmax(probs, axis=0)
+        # predicted classes are (0=zero, 1=nonzero-nonexcess, 2=excess)
+        if self.deterministic:
+            labels = torch.where(pred > threshes, 2, 1)     # everything is nonzero, i.e., class 1 or 2
+        else:
+            probs = self.compute_all_probs(pred, threshes, aslist=False)
+            labels = np.argmax(probs, axis=0)
         return labels
 
     def compute_class_metrics(self, y, pred, threshes):
@@ -439,7 +480,8 @@ class SpatiotemporalModel(nn.Module):
         """
         bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
         return loglik(
-            y[:, 0], gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes), self.moderate_func
+            y[:, 0], gpd_pred, norm_pred, bin_pred[:, 0], bin_pred[:, 1], self.effective_thresh(threshes),
+            self.moderate_func
         )
 
     def compute_rmse(self, y, pred, threshes):
@@ -733,7 +775,7 @@ class ConcreteDropout(nn.Module):
 
         self.p = torch.sigmoid(self.p_logit)
         if test:  # At test time we perform actual dropout rather than its concrete approximation
-            x = F.dropout3d(x, self.p.item(), training=True)    # keep training True to keep dropout on
+            x = F.dropout3d(x, self.p.item(), training=True)  # keep training True to keep dropout on
         else:
             u_noise = torch.rand_like(x)
 
@@ -794,3 +836,118 @@ class CNNConcreteDropout(nn.Module):
 
         return x
 
+
+@concrete_regulariser
+class ExtremeTime2(nn.Module):
+    """
+    Implementation of Ding et al.
+    Pulled ExtremeTime2 directly from https://github.com/tymefighter/Forecast/blob/master/ts/model/extreme_time2.py
+    """
+
+    def __init__(self, forecast_horizon, ndim, hdim, odim, window_size, memory_dim, context_size):
+        """
+        Initialize the model parameters and hyperparameters
+        :param forecast_horizon: How much further in the future the model has to
+        predict the target series variable
+        :param memory_dim: Size of the explicit memory unit used by the model, it
+        should be a scalar value (CHANGED from 80 -> 7 for this task)
+        :param window_size: Size of each window which is to be compressed and stored
+        as a memory cell (CHANGED from 60 -> 7 for this task)
+        :param hdim: Size of the hidden state of the GRU encoder
+        :param context_size: Size of context produced from historical sequences (CHANGED from 10 -> 7 for this task)
+        :param ndim: Number of exogenous variables the model takes as input
+        this is for internal use only (i.e. it is an implementation detail)
+        If True, then object is normally created, else object is created
+        without any member values being created. This is used when model
+        is created by the static load method
+        """
+        super().__init__()
+        self.forecast_horizon = forecast_horizon
+        self.memory_dim = memory_dim
+        self.window_size = window_size
+        self.ndim = ndim
+        self.hdim = hdim
+        self.odim = odim
+        self.context_dim = context_size
+        self.memory = None
+        self.context = None
+        self.gru_input = nn.GRUCell(input_size=int(np.prod(self.ndim)), hidden_size=self.hdim)
+        self.gru_memory = nn.GRUCell(input_size=int(np.prod(self.ndim)), hidden_size=self.hdim)
+        self.gru_context = nn.GRUCell(input_size=int(np.prod(self.ndim)), hidden_size=self.context_dim)
+        final_weight_size = self.hdim + self.context_dim
+        self.linear = nn.Linear(in_features=final_weight_size, out_features=int(np.prod(odim)))
+
+    def forward(self, x, test=False):
+        """
+        Forecast using the model parameters on the provided input data
+        :param x: Input target variable with shape (b, n, ...)
+        :param test: Ignore this. Added to match CNNConcreteDropout signature.
+        :return: Forecast targets predicted by the model
+        """
+        self.build_memory(x)
+        return self.predict_timestep(x)
+
+    def build_memory(self, x):
+        """
+        Build Model Memory using the timesteps seen up till now
+        :param x: Features, has shape (n, self.inputShape)
+        timestep earlier than the current timestep
+        :return: None
+        """
+        self.memory = [None] * self.memory_dim
+        self.context = [None] * self.memory_dim
+        b, c, length, h, w = x.shape
+
+        for i in range(self.memory_dim):
+            tmax = np.random.randint(low=0, high=length)
+            self.memory[i], self.context[i] = self.run_gru_on_window(x, tmax)
+
+        self.memory = torch.stack(self.memory)
+        self.context = torch.stack(self.context)
+
+    def run_gru_on_window(self, x, tmax):
+        """
+        Runs GRU on the window and returns the final state
+        :param x: Features, has shape (n, self.inputShape)
+        :param tmax: Maximum timestep to run to in x
+        :return: The final state after running on the window, it has shape (self.encoderStateSize,)
+        """
+        # apply to flattened (b, c, t=0, h, w) -> (b, chw)
+        gru_memory_state = self.gru_memory(x[:, :, 0].flatten(start_dim=1))
+        gru_context_state = self.gru_context(x[:, :, 0].flatten(start_dim=1))
+
+        for t in range(1, tmax):
+            gru_memory_state = self.gru_memory(x[:, :, t].flatten(start_dim=1), gru_memory_state)
+            gru_context_state = self.gru_context(x[:, :, t].flatten(start_dim=1), gru_context_state)
+
+        return gru_memory_state, gru_context_state
+
+    def predict_timestep(self, x, current_time=-1):
+        """
+        Predict on a Single Timestep
+        :param x: Features, has shape (b, n, ...)
+        :param current_time: Current Timestep
+        :return: The predicted value on current timestep and the next state
+        """
+        b, c, n, h, w = x.shape
+        embedding = self.gru_input(x[:, :, current_time].flatten(start_dim=1))      # (b, c, n, h, w) -> (b, cnhw) @ (cnhw, h) -> (b, h)
+        attention_weights = self.compute_attention(embedding)       # (b, 1, n)
+        con = self.context.permute(1, 0, 2)                         # (n, b, h) -> (b, n, h)
+        weighted_context = (attention_weights @ con).squeeze()      # (b, 1, n) @ (b, n, h) -> (b, 1, h) -> (b, h)
+        concat_vector = torch.concat([embedding, weighted_context], dim=1)  # (b, h) | (b, c) -> (b, h+c)
+        pred = self.linear(concat_vector)                           # (b, h+c) -> (b, cnhw)
+        pred = pred.reshape([b] + list(self.odim))                  # (b, cnhw) -> (b, c, n, h, w)
+
+        return pred
+
+    def compute_attention(self, embedding):
+        """
+        Computes Attention Weights by taking softmax of the inner product
+        between embedding of the input and the memory states
+        :param embedding: Embedding of the input, it has shape (self.hdim,)
+        :return: Attention Weight Values
+        """
+        mem = self.memory.permute(1, 0, 2)  # shape (n, b, h) -> (b, n, h)
+        emb = embedding.unsqueeze(2)        # shape (b, h, 1)
+        out = F.softmax(mem @ emb, dim=1)   # shape (b, n, 1) with softmax over time dimension (n)
+        return out.permute(0, 2, 1)         # shape (b, 1, n) such that we may multiply with (b, n, h) feature matrix
