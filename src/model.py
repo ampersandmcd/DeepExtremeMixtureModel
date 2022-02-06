@@ -151,14 +151,16 @@ class SpatiotemporalModel(nn.Module):
     def effective_thresh(self, threshes):
         """
         The effective threshold is the threshold to be used by the mixture model. If we're not using EVT
-        then the threshold is infinite (all non-zero values are modeled by lognormal).
+        then the threshold is infinite (all non-zero values are modeled by lognormal). Note that we cannot actually
+        set it to infinity, however, as that breaks the computation graph during the backward pass.
+        We find setting the value to 1000. works well, as precipitation values are much smaller than this in practice.
         Parameters:
         threshes - tensor, the actual thresholds
         """
         if self.use_evt:
             return threshes
         else:
-            return torch.ones_like(threshes, device=get_device()) * float("inf")
+            return torch.ones_like(threshes, device=get_device()) * 1000.
 
     def _to_stats(self, cur_raw, threshes):
         """
