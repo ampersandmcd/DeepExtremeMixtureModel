@@ -38,28 +38,25 @@ if __name__ == "__main__":
     parser = pl.Trainer.add_argparse_args(parser)
 
     # add model setup options
-    parser.add_argument("--model", default="bernoulli-lognormal", type=str, help="Model to train",
+    parser.add_argument("--model", default="deterministic-cnn", type=str, help="Model to train",
                         choices=[
                             "bernoulli-lognormal-gp-variable",  # proposed model with variable threshold
-                            "bernoulli-lognormal-gp-fixed",  # proposed model with fixed threshold
-                            "bernoulli-lognormal",  # ablation of proposed model with hurdle only
-                            "deterministic-cnn",    # ablation of proposed model with deterministic preds
-                            "vandal",  # baseline from Vandal et al.
-                            "ding",  # baseline from Ding et al.
-                            "kong",  # baseline from Kong et al.
+                            "bernoulli-lognormal-gp-fixed",     # proposed model with fixed threshold
+                            "bernoulli-lognormal",              # ablation of proposed model with hurdle only
+                            "deterministic-cnn",                # ablation of proposed model with deterministic preds
+                            "vandal",                           # baseline from Vandal et al.
+                            "ding",                             # baseline from Ding et al.
+                            "kong",                             # baseline from Kong et al.
                         ])
     parser.add_argument("--n_train", default=450, type=tuple, help="Number of samples to use for training")
     parser.add_argument("--n_val", default=250, type=tuple, help="Number of samples to use for validation")
     # note that n_test is implicitly defined by n - n_train - n_val
     parser.add_argument("--batch_size", default=50, type=int, help="Batch size to train with")
-    parser.add_argument("--mean_multiplier", default=0.1, type=float,
-                        help="Weight assigned to RMSE loss term (complement is weight assigned to NLL term)")
-    parser.add_argument("--dropout_multiplier", default=1e-2, type=float,
-                        help="Weight assigned to dropout loss term in Vandal baseline")
-    parser.add_argument("--quantile", default=0.6, type=float,
-                        help="Quantile used to define excess threshold in proposed model; used only for evaluation if variable threshold model")
-    parser.add_argument("--continuous_evt", default=False, type=eval,
-                        help="Whether to constrain mixture to be continuous; appealing in theory but performs poorly in practice")
+    parser.add_argument("--mean_multiplier", default=0.9, type=float, help="Weight assigned to RMSE loss term (1 - complement is weight assigned to NLL term (probabilistic models) or EVL term (Ding et al.)).")
+    parser.add_argument("--dropout_multiplier", default=1e-2, type=float, help="Weight assigned to dropout loss term in Vandal baseline")
+    parser.add_argument("--quantile", default=0.6, type=float, help="Quantile used to define excess threshold in proposed model; used only for evaluation if variable threshold model")
+    parser.add_argument("--continuous_evt", default=False, type=eval, help="Whether to constrain mixture to be continuous; appealing in theory but performs poorly in practice")
+    parser.add_argument("--ev_index", default=1.0, type=float, help="Extreme value index hyperparameter for Ding et al")
 
     # add training setup options
     parser.add_argument("--wandb_name", default="default", type=str, help="Name of wandb run")
@@ -101,6 +98,7 @@ if __name__ == "__main__":
         "mc_forwards": 0,
         "backbone": "cnn",
         "deterministic": False,
+        "ev_index": args.ev_index
     }
 
     # tweak parameters depending on model choice
@@ -120,11 +118,12 @@ if __name__ == "__main__":
     elif args.model == "ding":
         st_params["backbone"] = "ding"
         st_params["deterministic"] = True
+        st_params["use_evt"] = True
         model_params = {
             "forecast_horizon": 1,
             "ndim": (11, 29, 59),
             "hdim": 10,
-            "odim": (1, 29, 59),
+            "odim": (2, 29, 59),    # y_hat and p_extreme in channel dimension
             "window_size": 7,
             "memory_dim": 7,
             "context_size": 7

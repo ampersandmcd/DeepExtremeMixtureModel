@@ -112,7 +112,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
 class SpatiotemporalModel(nn.Module):
 
     def __init__(self, model, use_evt, moderate_func, ymax, mean_multiplier, dropout_multiplier, continuous_evt,
-                 variable_thresh, quantile, use_mc, mc_forwards, backbone, deterministic):
+                 variable_thresh, quantile, use_mc, mc_forwards, backbone, deterministic, ev_index):
         """
         Initialize spatiotemporal model.
         Parameters:
@@ -129,7 +129,8 @@ class SpatiotemporalModel(nn.Module):
         use_mc - bool, whether or not to use montecarlo dropout evaluation
         mc_forwards - int, number of monte carlo forward passes to use for Vandal et al
         backbone - str, type of model used
-        deterministic - bool, true for use with Vandal et al
+        deterministic - bool, true for use with Vandal et al and Ding et al
+        ev_index - float, extreme value index hyperparameter in Ding et al
         """
         super().__init__()
         set_default_tensor_type()
@@ -145,17 +146,27 @@ class SpatiotemporalModel(nn.Module):
         self.mc_forwards = mc_forwards
         self.backbone = backbone
         self.deterministic = deterministic
+        self.ev_index = ev_index
         if self.continuous_evt:
             assert use_evt
         self.ymax = ymax
 
     def forward(self, x, threshes, test=False):
         if self.use_mc:
+            # output (n, 6, h, w) tensor of distribution parameters
             return self.compute_mc_stats(x, threshes, self.mc_forwards, test)
-        elif self.deterministic:
+        elif self.deterministic and not self.use_evt:
+            # output (n, 1, h, w) tensor of predicted values
             pred = self.model(x, test).squeeze(2)
-            return F.relu(pred)     # in deterministic precipitation prediction, all values >= 0
+            return F.relu(pred)                 # in deterministic precipitation prediction, all values >= 0
+        elif self.deterministic and self.use_evt:
+            # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
+            pred = self.model(x, test)
+            pred[:, 0] = F.relu(pred[:, 0])         # all predicted values >= 0
+            pred[:, 1] = F.sigmoid(pred[:, 1])      # all predicted probabilities in [0, 1]
+            return pred
         else:
+            # output (n, 6, h, w) tensor of distribution parameters
             return self.compute_stats(x, threshes, test)
 
     def effective_thresh(self, threshes):
@@ -260,12 +271,25 @@ class SpatiotemporalModel(nn.Module):
         predicted_logliks - array, negative log-likelihood
         rmse_loss - array, MSE of point predictions
         """
-        if self.deterministic:
+        if self.deterministic and not self.use_evt:
             # deterministic model loss
+            # output (n, 1, h, w) tensor of predicted values
             rmse_loss = torch_rmse(y, pred)
             nll_loss = torch.zeros_like(rmse_loss)
+        elif self.deterministic and self.use_evt:
+            # Ding et al. model loss
+            # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
+            point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
+            excess_true = 1. * (y > self.effective_thresh(threshes))
+            rmse_loss = torch_rmse(y, point_pred)
+            beta_0, beta_1 = self.quantile, 1 - self.quantile
+            nll_loss = torch.nanmean(
+                -beta_0 * (1 - excess_pred / self.ev_index)**self.ev_index * excess_true * torch.log(excess_pred) + \
+                -beta_1 * (1 - (1 - excess_pred) / self.ev_index)**self.ev_index * (1 - excess_true) * torch.log(1 - excess_pred)
+            )
         else:
             # probabilistic model loss
+            # output (n, 6, h, w) tensor of distribution parameters
             rmse_loss = self.compute_rmse(y, pred, threshes)
             bin_pred, gpd_pred, norm_pred = self.split_pred(pred)
             # I'm pretty sure this line was necessary to gpd_pred later on for debugging purposes. I don't think
@@ -303,11 +327,22 @@ class SpatiotemporalModel(nn.Module):
         auc_macro_ovo - scalar, auc macro one versus one
         auc_macro_ovr - scalar, auc macro one versus all
         """
-
-        if self.deterministic:
-            # deterministic model metrics
+        if self.deterministic and not self.use_evt:
+            # deterministic model loss
+            # output (n, 1, h, w) tensor of predicted values
             rmse_loss = torch_rmse(y, pred)
             nll_loss = torch.zeros_like(rmse_loss)
+        elif self.deterministic and self.use_evt:
+            # Ding et al. model loss
+            # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
+            point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
+            excess_true = 1. * (y > self.effective_thresh(threshes))
+            rmse_loss = torch_rmse(y, point_pred)
+            beta_0, beta_1 = self.quantile, 1 - self.quantile
+            nll_loss = torch.nanmean(
+                -beta_0 * (1 - excess_pred / self.ev_index)**self.ev_index * excess_true * torch.log(excess_pred) + \
+                -beta_1 * (1 - (1 - excess_pred) / self.ev_index)**self.ev_index * (1 - excess_true) * torch.log(1 - excess_pred)
+            )
         else:
             # probabilistic model metrics
             rmse_loss = self.compute_rmse(y, pred, threshes)
@@ -361,10 +396,16 @@ class SpatiotemporalModel(nn.Module):
         threshes - tensor, thresholds
         aslist - boolean, if True returns results as a list of arrays if False stacks the arrays into one large array
         """
-        if self.deterministic:
+        if self.deterministic and not self.use_evt:
             # compute hard estimates
             pred_zero = to_np(torch.where(pred == 0, 1, 0))
             pred_excess = to_np(torch.where(pred > threshes, 1, 0))
+            pred_moderate = to_np(1 - pred_zero - pred_excess)
+        elif self.deterministic and self.use_evt:
+            # compute soft estimates
+            point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
+            pred_zero = to_np(torch.where(point_pred == 0, 1, 0))
+            pred_excess = to_np(torch.where(point_pred != 0, 1, 0) * excess_pred)
             pred_moderate = to_np(1 - pred_zero - pred_excess)
         else:
             # compute soft estimates
@@ -387,11 +428,8 @@ class SpatiotemporalModel(nn.Module):
         labels - array, predicted class labels
         """
         # predicted classes are (0=zero, 1=nonzero-nonexcess, 2=excess)
-        if self.deterministic:
-            labels = torch.where(pred > threshes, 2, 1)     # everything is nonzero, i.e., class 1 or 2
-        else:
-            probs = self.compute_all_probs(pred, threshes, aslist=False)
-            labels = np.argmax(probs, axis=0)
+        probs = self.compute_all_probs(pred, threshes, aslist=False)
+        labels = np.argmax(probs, axis=0)
         return labels
 
     def compute_class_metrics(self, y, pred, threshes):
@@ -875,6 +913,7 @@ class ExtremeTime2(nn.Module):
         self.gru_context = nn.GRUCell(input_size=int(np.prod(self.ndim)), hidden_size=self.context_dim)
         final_weight_size = self.hdim + self.context_dim
         self.linear = nn.Linear(in_features=final_weight_size, out_features=int(np.prod(odim)))
+        self.b = nn.Linear(in_features=int(np.prod(odim))//2, out_features=int(np.prod(odim))//2, bias=False)
 
     def forward(self, x, test=False):
         """
@@ -934,10 +973,12 @@ class ExtremeTime2(nn.Module):
         con = self.context.permute(1, 0, 2)                         # (n, b, h) -> (b, n, h)
         weighted_context = (attention_weights @ con).squeeze()      # (b, 1, n) @ (b, n, h) -> (b, 1, h) -> (b, h)
         concat_vector = torch.concat([embedding, weighted_context], dim=1)  # (b, h) | (b, c) -> (b, h+c)
-        pred = self.linear(concat_vector)                           # (b, h+c) -> (b, cnhw)
-        pred = pred.reshape([b] + list(self.odim))                  # (b, cnhw) -> (b, c, n, h, w)
-
-        return pred
+        out = self.linear(concat_vector)                            # (b, h+c) -> (b, cnhw)
+        o_tilde, u = out[:, :h*w], out[:, h*w:]                     # o_tilde and u from paper
+        o = o_tilde + self.b(u)                                     # b.T @ u from paper
+        o_and_u = torch.concat([o, u], dim=1)
+        o_and_u = o_and_u.reshape([b] + list(self.odim))            # (b, cnhw) -> (b, c, n, h, w)
+        return o_and_u
 
     def compute_attention(self, embedding):
         """
