@@ -61,14 +61,15 @@ if __name__ == "__main__":
 
     # add training setup options
     parser.add_argument("--wandb_name", default="default", type=str, help="Name of wandb run")
-    parser.add_argument("--n_epoch", default=500, type=int, help="Number of epochs")
+    parser.add_argument("--n_epoch", default=200, type=int, help="Number of epochs")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
     parser.add_argument("--lr", default=1e-4, type=float, help="Learning rate")
     args = parser.parse_args()
     args.max_epochs = args.n_epoch
+    print(f"Starting run with args: {args}")
 
     # configure data
-    with open("../data/processed_data.pickle", "rb") as f:
+    with open("../data/subx/processed_data.pickle", "rb") as f:
         data = pickle.load(f)
     x, y = data["x"], data["y"]
     train_dataset = NumpyDataset(x[:args.n_train], y[:args.n_train])
@@ -147,6 +148,7 @@ if __name__ == "__main__":
     # run train batch
     i = 0
     optim = torch.optim.Adam(st_model.parameters(), lr=args.lr)
+    print(f"Starting training.")
     for batch in train_dataloader:
         st_model.train()
         x = batch["x"].type(torch.FloatTensor).to(device)
@@ -176,8 +178,10 @@ if __name__ == "__main__":
         print("t_nll_loss", nll_loss)
         print("t_rmse_loss", rmse_loss)  # t for train
         i += 1
+    print(f"Done training.")
 
     # run test batch
+    print(f"Starting testing.")
     for batch in train_dataloader:
         st_model.eval()
         x = batch["x"].type(torch.FloatTensor).to(device)
@@ -218,3 +222,4 @@ if __name__ == "__main__":
             print(f"f_{metric_name}", metric_value)
         print("*" * 100)
         break
+    print(f"Done testing.")

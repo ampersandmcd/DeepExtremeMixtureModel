@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 from model import SpatiotemporalLightningModule
-from util import NumpyDataset
+from util import get_device, NumpyDataset
 
 
 if __name__ == "__main__":
@@ -65,14 +65,15 @@ if __name__ == "__main__":
 
     # add training setup options
     parser.add_argument("--wandb_name", default="default", type=str, help="Name of wandb run")
-    parser.add_argument("--n_epoch", default=500, type=int, help="Number of epochs")
+    parser.add_argument("--n_epoch", default=200, type=int, help="Number of epochs")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
     parser.add_argument("--lr", default=1e-4, type=float, help="Learning rate")
     args = parser.parse_args()
     args.max_epochs = args.n_epoch
+    print(f"Starting run with args: {args}")
 
     # configure data
-    with open("../data/processed_data.pickle", "rb") as f:
+    with open("../data/subx/processed_data.pickle", "rb") as f:
         data = pickle.load(f)
     x, y = data["x"], data["y"]
     train_dataset = NumpyDataset(x[:args.n_train], y[:args.n_train])
@@ -147,20 +148,32 @@ if __name__ == "__main__":
                                                      seed=args.seed, lr=args.lr, n_epoch=args.max_epochs)
 
     # wandb logging
-    wandb.init(project="demm")
+    wandb.init(project="demm", group=args.model)
     if args.wandb_name != "default":
         wandb.run.name = args.wandb_name  # continue logging on previous run
-    wandb_logger = pl.loggers.WandbLogger(project="demm")
+    wandb_logger = pl.loggers.WandbLogger(project="demm", group=args.model)
     wandb_logger.watch(lightning_module, log="all", log_freq=50)
     wandb_logger.experiment.config.update(args)
 
     # trainer configuration
     trainer = pl.Trainer.from_argparse_args(args)
+    trainer = pl.Trainer.from_argparse_args(args)
     trainer.logger = wandb_logger
-    trainer.callbacks.append(ModelCheckpoint(monitor="v_loss"))
+    checkpoint_callback = ModelCheckpoint(monitor="v_rmse_loss")
+    trainer.callbacks.append(checkpoint_callback)
 
-    # train
+    # train and save best models
+    print(f"Starting training.")
     trainer.fit(lightning_module, train_dataloader, val_dataloader)
+    wandb_logger.experiment.config.update({"best_model_path": checkpoint_callback.best_model_path,
+                                           "last_model_path": checkpoint_callback.last_model_path})
+    print(f"Done training.")
+    print(f"Best Model: {checkpoint_callback.best_model_path}")
+    print(f"Last Model: {checkpoint_callback.last_model_path}")
 
-    # test
+    # test with best validation loss model
+    print(f"Starting testing with {checkpoint_callback.best_model_path}.")
+    lightning_module = SpatiotemporalLightningModule.load_from_checkpoint(checkpoint_callback.best_model_path)
+    lightning_module.to(device=get_device(), dtype=torch.FloatTensor)
     trainer.test(lightning_module, test_dataloader)
+    print(f"Done testing.")

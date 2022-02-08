@@ -1,17 +1,13 @@
-import os
 import pickle
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import pytorch_lightning as pl
-
-import wandb
 from argparse import ArgumentParser
+
+import pytorch_lightning as pl
+import torch
 from torch.utils.data import DataLoader
 
+import wandb
 from model import SpatiotemporalLightningModule
-from util import NumpyDataset
-
+from util import get_device, NumpyDataset
 
 if __name__ == "__main__":
 
@@ -19,6 +15,7 @@ if __name__ == "__main__":
     parser = pl.Trainer.add_argparse_args(parser)
     parser.add_argument("--name", default="1z1h5m58", type=str, help="Name of wandb run")
     args = parser.parse_args()
+    print(f"Starting run with args: {args}")
 
     # wandb logging
     wandb.init(id=args.name, project="demm", resume="must")
@@ -26,7 +23,7 @@ if __name__ == "__main__":
     run = api.run(f"andrewmcdonald/demm/{args.name}")
 
     # configure data
-    with open("../data/processed_data.pickle", "rb") as f:
+    with open("../data/subx/processed_data.pickle", "rb") as f:
         data = pickle.load(f)
     x, y = data["x"], data["y"]
 
@@ -35,18 +32,9 @@ if __name__ == "__main__":
     test_dataloader = DataLoader(test_dataset, batch_size=run.config["batch_size"], num_workers=4)
 
     # load model from best checkpoint
-    model = None
-    checkpoint_folder = f"./demm/{args.name}/checkpoints"
-    checkpoints = os.listdir(checkpoint_folder)
-    best_epoch = 0
-    best_checkpoint = None
-    for checkpoint in checkpoints:
-        epoch = int(checkpoint.split("=")[1].split("-")[0])
-        if epoch > best_epoch:
-            best_epoch = epoch
-            best_checkpoint = f"{checkpoint_folder}/{checkpoint}"
-
-    lightning_module = SpatiotemporalLightningModule.load_from_checkpoint(best_checkpoint)
+    best_model_path = run.config["best_model_path"]
+    lightning_module = SpatiotemporalLightningModule.load_from_checkpoint(best_model_path)
+    lightning_module.to(device=get_device(), dtype=torch.FloatTensor)
 
     # wandb logging
     wandb_logger = pl.loggers.WandbLogger(project="demm")
@@ -57,4 +45,6 @@ if __name__ == "__main__":
     trainer.logger = wandb_logger
 
     # test
+    print(f"Starting testing with {best_model_path}.")
     trainer.test(lightning_module, test_dataloader)
+    print(f"Done testing.")
