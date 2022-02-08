@@ -174,6 +174,6 @@ if __name__ == "__main__":
     # test with best validation loss model
     print(f"Starting testing with {checkpoint_callback.best_model_path}.")
     lightning_module = SpatiotemporalLightningModule.load_from_checkpoint(checkpoint_callback.best_model_path)
-    lightning_module.to(device=get_device(), dtype=torch.FloatTensor)
+    lightning_module.to(device=get_device(), dtype=torch.float)
     trainer.test(lightning_module, test_dataloader)
     print(f"Done testing.")

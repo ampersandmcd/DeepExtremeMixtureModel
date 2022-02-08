@@ -34,7 +34,7 @@ if __name__ == "__main__":
     # load model from best checkpoint
     best_model_path = run.config["best_model_path"]
     lightning_module = SpatiotemporalLightningModule.load_from_checkpoint(best_model_path)
-    lightning_module.to(device=get_device(), dtype=torch.FloatTensor)
+    lightning_module.to(device=get_device(), dtype=torch.float)
 
     # wandb logging
     wandb_logger = pl.loggers.WandbLogger(project="demm")
