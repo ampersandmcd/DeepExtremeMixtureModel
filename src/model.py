@@ -969,12 +969,12 @@ class ExtremeTime2(nn.Module):
         :return: The predicted value on current timestep and the next state
         """
         b, c, n, h, w = x.shape
-        embedding = self.gru_input(x[:, :, current_time].flatten(start_dim=1))      # (b, c, n, h, w) -> (b, cnhw) @ (cnhw, h) -> (b, h)
+        embedding = self.gru_input(x[:, :, current_time].flatten(start_dim=1))      # (b, c, n, ht, w) -> (b, cnhw) @ (cnhw, hd) -> (b, hd)
         attention_weights = self.compute_attention(embedding)       # (b, 1, n)
-        con = self.context.permute(1, 0, 2)                         # (n, b, h) -> (b, n, h)
-        weighted_context = (attention_weights @ con).squeeze()      # (b, 1, n) @ (b, n, h) -> (b, 1, h) -> (b, h)
-        concat_vector = torch.concat([embedding, weighted_context], dim=1)  # (b, h) | (b, c) -> (b, h+c)
-        out = self.linear(concat_vector)                            # (b, h+c) -> (b, cnhw)
+        con = self.context.permute(1, 0, 2)                         # (n, b, hd) -> (b, n, hd)
+        weighted_context = (attention_weights @ con).squeeze()      # (b, 1, n) @ (b, n, hd) -> (b, 1, hd) -> (b, hd)
+        concat_vector = torch.concat([embedding, weighted_context], dim=1)  # (b, hd) | (b, c) -> (b, hd+c)
+        out = self.linear(concat_vector)                            # (b, hd+c) -> (b, cnhw)
         o_tilde, u = out[:, :h*w], out[:, h*w:]                     # o_tilde and u from paper
         o = o_tilde + self.b(u)                                     # b.T @ u from paper
         o_and_u = torch.concat([o, u], dim=1)
