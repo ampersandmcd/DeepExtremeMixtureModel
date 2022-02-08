@@ -62,7 +62,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_name", default="default", type=str, help="Name of wandb run")
     parser.add_argument("--n_epoch", default=500, type=int, help="Number of epochs")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
-    parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
+    parser.add_argument("--lr", default=1e-4, type=float, help="Learning rate")
     args = parser.parse_args()
     args.max_epochs = args.n_epoch
 
