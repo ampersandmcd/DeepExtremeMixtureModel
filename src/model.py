@@ -26,6 +26,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
         else:
             raise ValueError()
         self.st_model = SpatiotemporalModel(model=model, **st_params).to(get_device())
+        pl.seed_everything(self.seed)
 
     def training_step(self, batch, batch_idx):
         self.train()
