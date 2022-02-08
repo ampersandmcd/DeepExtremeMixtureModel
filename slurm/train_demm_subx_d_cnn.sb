@@ -20,5 +20,7 @@ wandb online
 python train.py --gpus=1 --seed=1 --model="deterministic-cnn"
 python train.py --gpus=1 --seed=2 --model="deterministic-cnn"
 python train.py --gpus=1 --seed=3 --model="deterministic-cnn"
+python train.py --gpus=1 --seed=4 --model="deterministic-cnn"
+python train.py --gpus=1 --seed=5 --model="deterministic-cnn"
 
 scontrol show job $SLURM_JOB_ID

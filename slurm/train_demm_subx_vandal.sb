@@ -20,5 +20,7 @@ wandb online
 python train.py --gpus=1 --seed=1 --model="vandal"
 python train.py --gpus=1 --seed=2 --model="vandal"
 python train.py --gpus=1 --seed=3 --model="vandal"
+python train.py --gpus=1 --seed=4 --model="vandal"
+python train.py --gpus=1 --seed=5 --model="vandal"
 
 scontrol show job $SLURM_JOB_ID

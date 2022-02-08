@@ -20,5 +20,7 @@ wandb online
 python train.py --gpus=1 --seed=1 --model="bernoulli-lognormal-gp-variable"
 python train.py --gpus=1 --seed=2 --model="bernoulli-lognormal-gp-variable"
 python train.py --gpus=1 --seed=3 --model="bernoulli-lognormal-gp-variable"
+python train.py --gpus=1 --seed=4 --model="bernoulli-lognormal-gp-variable"
+python train.py --gpus=1 --seed=5 --model="bernoulli-lognormal-gp-variable"
 
 scontrol show job $SLURM_JOB_ID
