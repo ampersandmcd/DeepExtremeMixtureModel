@@ -158,12 +158,12 @@ class SpatiotemporalModel(nn.Module):
         elif self.deterministic and not self.use_evt:
             # output (n, 1, h, w) tensor of predicted values
             pred = self.model(x, test).squeeze(2)
-            return F.relu(pred)                 # in deterministic precipitation prediction, all values >= 0
+            return torch.relu(pred)                 # in deterministic precipitation prediction, all values >= 0
         elif self.deterministic and self.use_evt:
             # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
             pred = self.model(x, test)
-            pred[:, 0] = F.relu(pred[:, 0])         # all predicted values >= 0
-            pred[:, 1] = F.sigmoid(pred[:, 1])      # all predicted probabilities in [0, 1]
+            pred[:, 0] = torch.relu(pred[:, 0])         # all predicted values >= 0
+            pred[:, 1] = torch.sigmoid(pred[:, 1])      # all predicted probabilities in [0, 1]
             return pred
         else:
             # output (n, 6, h, w) tensor of distribution parameters
