@@ -78,9 +78,9 @@ if __name__ == "__main__":
     train_dataset = NumpyDataset(x[:args.n_train], y[:args.n_train])
     val_dataset = NumpyDataset(x[args.n_train:args.n_train + args.n_val], y[args.n_train:args.n_train + args.n_val])
     test_dataset = NumpyDataset(x[args.n_train + args.n_val:], y[args.n_train + args.n_val:])
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=4)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=4)
-    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=4)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=1)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=1)
+    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=1)
 
     # configure parameters of model backbone (3D CNN or GRU) and spatiotemporal model
     model_params = {
