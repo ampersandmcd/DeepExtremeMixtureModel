@@ -26,7 +26,6 @@ class NumpyDataset(Dataset):
         return {"x": self.x[i], "y": self.y[i]}
 
 
-
 def get_device():
     """
     Determines whether to use cuda or cpu for tensors
@@ -128,7 +127,7 @@ def all_mean(gpd_stats, moderate_stats, zero_probs, excess_probs, threshes, mode
         raise ValueError('only lognormal function is supported for mean calculations')
     # Compute weighted mean of gpd component if we are using EVT
     if torch.all(torch.isinf(threshes)):
-        weighted_excess = 0.     # we are not using EVT
+        weighted_excess = 0.  # we are not using EVT
     else:
         weighted_excess = gp_mean(gpd_stats[:, 0], gpd_stats[:, 1], threshes)
         weighted_excess *= (1 - zero_probs) * excess_probs
@@ -648,7 +647,7 @@ def loglik(samples, gpd_stats, moderate_stats, zero_probs, excess_probs, threshe
         nan_transfer(samples, zero_loglik), \
         nan_transfer(samples, nz_loglik), \
         nan_transfer(samples, nthresh_loglik), \
-        nan_transfer(samples, main_loglik),\
+        nan_transfer(samples, main_loglik), \
         nan_transfer(samples, thresh_loglik), \
         nan_transfer(samples, excess_loglik)  # Make sure nans are propogating correctly
     total_loglik = \
@@ -656,7 +655,7 @@ def loglik(samples, gpd_stats, moderate_stats, zero_probs, excess_probs, threshe
         nan_to_num(nz_loglik) + \
         nan_to_num(nthresh_loglik) + \
         nan_to_num(main_loglik) + \
-        nan_to_num(thresh_loglik) +\
+        nan_to_num(thresh_loglik) + \
         nan_to_num(excess_loglik)  # Add up all log-likelihoods
     total_loglik[nan_inds] += np.nan  # Make sure nans are propogating correctly
     return total_loglik
