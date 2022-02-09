@@ -61,7 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("--quantile", default=0.6, type=float, help="Quantile used to define excess threshold in proposed model; used only for evaluation if variable threshold model")
     parser.add_argument("--continuous_evt", default=False, type=eval, help="Whether to constrain mixture to be continuous; appealing in theory but performs poorly in practice")
     parser.add_argument("--ev_index", default=1.0, type=float, help="Extreme value index hyperparameter for Ding et al")
-    parser.add_argument("--mc_forwards", default=10, type=float, help="Number of Monte Carlo passes to use in Vandal et al")
+    parser.add_argument("--mc_forwards", default=30, type=float, help="Number of Monte Carlo passes to use in Vandal et al")
 
     # add training setup options
     parser.add_argument("--wandb_name", default="default", type=str, help="Name of wandb run")
