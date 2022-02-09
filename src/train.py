@@ -79,7 +79,7 @@ if __name__ == "__main__":
     train_dataset = NumpyDataset(x[:args.n_train], y[:args.n_train])
     val_dataset = NumpyDataset(x[args.n_train:args.n_train + args.n_val], y[args.n_train:args.n_train + args.n_val])
     test_dataset = NumpyDataset(x[args.n_train + args.n_val:], y[args.n_train + args.n_val:])
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=1)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=1, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=1)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=1)
 
