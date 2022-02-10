@@ -52,16 +52,16 @@ if __name__ == "__main__":
                             "ding",                             # baseline from Ding et al.
                             "kong",                             # baseline from Kong et al.
                         ])
-    parser.add_argument("--n_train", default=450, type=tuple, help="Number of samples to use for training")
-    parser.add_argument("--n_val", default=250, type=tuple, help="Number of samples to use for validation")
-    # note that n_test is implicitly defined by n - n_train - n_val
-    parser.add_argument("--batch_size", default=50, type=int, help="Batch size to train with")
+    parser.add_argument("--n_train", default=731, type=tuple, help="Number of samples to use for training")
+    parser.add_argument("--n_val", default=104, type=tuple, help="Number of samples to use for validation")
+    # note that n_test is implicitly defined by n - n_train - n_val with n = 939
+    parser.add_argument("--batch_size", default=104, type=int, help="Batch size to train with")
     parser.add_argument("--mean_multiplier", default=0.9, type=float, help="Weight assigned to RMSE loss term (1 - complement is weight assigned to NLL term (probabilistic models) or EVL term (Ding et al.)).")
     parser.add_argument("--dropout_multiplier", default=1e-2, type=float, help="Weight assigned to dropout loss term in Vandal baseline")
     parser.add_argument("--quantile", default=0.6, type=float, help="Quantile used to define excess threshold in proposed model; used only for evaluation if variable threshold model")
     parser.add_argument("--continuous_evt", default=False, type=eval, help="Whether to constrain mixture to be continuous; appealing in theory but performs poorly in practice")
     parser.add_argument("--ev_index", default=1.0, type=float, help="Extreme value index hyperparameter for Ding et al")
-    parser.add_argument("--mc_forwards", default=30, type=float, help="Number of Monte Carlo passes to use in Vandal et al")
+    parser.add_argument("--mc_forwards", default=8, type=float, help="Number of Monte Carlo passes to use in Vandal et al")
 
     # add training setup options
     parser.add_argument("--wandb_name", default="default", type=str, help="Name of wandb run")
@@ -72,10 +72,13 @@ if __name__ == "__main__":
     args.max_epochs = args.n_epoch
     print(f"Starting run with args: {args}")
 
-    # configure data
+    # configure data with log-transform and standardization on x
     with open("../data/subx/processed_data.pickle", "rb") as f:
         data = pickle.load(f)
     x, y = data["x"], data["y"]
+    x = np.log(x + 1)
+    mu_x, sigma_x = np.nanmean(x[:args.n_train + args.n_val]), np.nanstd(x[:args.n_train + args.n_val])
+    x = (x - mu_x) / sigma_x
     train_dataset = NumpyDataset(x[:args.n_train], y[:args.n_train])
     val_dataset = NumpyDataset(x[args.n_train:args.n_train + args.n_val], y[args.n_train:args.n_train + args.n_val])
     test_dataset = NumpyDataset(x[args.n_train + args.n_val:], y[args.n_train + args.n_val:])
@@ -159,7 +162,7 @@ if __name__ == "__main__":
     trainer = pl.Trainer.from_argparse_args(args)
     trainer = pl.Trainer.from_argparse_args(args)
     trainer.logger = wandb_logger
-    checkpoint_callback = ModelCheckpoint(monitor="v_rmse_loss")
+    checkpoint_callback = ModelCheckpoint(monitor="v_loss")
     trainer.callbacks.append(checkpoint_callback)
 
     # train and save best models
