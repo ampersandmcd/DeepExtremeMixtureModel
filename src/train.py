@@ -72,10 +72,12 @@ if __name__ == "__main__":
     args.max_epochs = args.n_epoch
     print(f"Starting run with args: {args}")
 
-    # configure data with log-transform and standardization on x
+    # configure data with log-transform, standardization on x, and random shuffle
     with open("../data/subx/processed_data.pickle", "rb") as f:
         data = pickle.load(f)
-    x, y = data["x"], data["y"]
+    x, y, rand_inds = data["x"], data["y"], data["rand_inds"]
+    x = x[rand_inds[:, args.seed]]
+    y = y[rand_inds[:, args.seed]]
     x = np.log(x + 1)
     mu_x, sigma_x = np.nanmean(x[:args.n_train + args.n_val]), np.nanstd(x[:args.n_train + args.n_val])
     x = (x - mu_x) / sigma_x
