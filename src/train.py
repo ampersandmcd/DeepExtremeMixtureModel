@@ -73,7 +73,7 @@ if __name__ == "__main__":
     print(f"Starting run with args: {args}")
 
     # configure data with log-transform, standardization on x, and random shuffle
-    with open("../data/subx/processed_data.pickle", "rb") as f:
+    with open("../data/subx/all_data.pickle", "rb") as f:
         data = pickle.load(f)
     x, y, rand_inds = data["x"], data["y"], data["rand_inds"]
     x = x[rand_inds[:, args.seed]]
