@@ -59,8 +59,9 @@ class SpatiotemporalLightningModule(pl.LightningModule):
 
         # choose threshold
         if self.st_model.variable_thresh:
-            # generate random thresholds in [0.5, 0.95] and augment predictors
-            threshes = 0.45 * torch.rand_like(y) + 0.5
+            # fix threshold at test time and augment predictors
+            t = np.nanquantile(to_np(y), self.st_model.quantile)
+            threshes = torch.ones_like(y) * t
             x = torch.cat([x, threshes[:, np.newaxis].repeat(1, 1, x.shape[2], 1, 1)], axis=1)
         else:
             # generate fixed threshold but do not augment predictors
@@ -68,7 +69,7 @@ class SpatiotemporalLightningModule(pl.LightningModule):
             threshes = torch.ones_like(y) * t
 
         # apply appropriate forward pass (logic for each model type is handled in forward() definition
-        pred = self.st_model(x, threshes, test=False)
+        pred = self.st_model(x, threshes, test=True)
 
         metrics = to_item(self.st_model.compute_metrics(y, pred, threshes))
         return {
