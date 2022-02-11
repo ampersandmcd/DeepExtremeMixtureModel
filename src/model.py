@@ -308,6 +308,23 @@ class SpatiotemporalModel(nn.Module):
                (0 if (self.dropout_multiplier == 0) else (self.dropout_multiplier * self.model.regularisation()))
         return loss, nll_loss, rmse_loss
 
+    def compute_point_pred(self, pred, threshes):
+        if self.deterministic and not self.use_evt:
+            # deterministic model
+            # output (n, 1, h, w) tensor of predicted values
+            point_pred = pred
+        elif self.deterministic and self.use_evt:
+            # Ding et al. model
+            # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
+            point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
+        else:
+            # probabilistic model
+            # output (n, 6, h, w) of predicted parameters
+            bin_pred, gpd_pred, moderate_pred = self.split_pred(pred)
+            point_pred = all_mean(gpd_pred, moderate_pred, bin_pred[:, 0], bin_pred[:, 1],
+                                  self.effective_thresh(threshes), self.moderate_func)
+        return point_pred
+
     def compute_metrics(self, y, pred, threshes):
         """
         Computes a wide range of evaluation metrics

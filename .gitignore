@@ -6,6 +6,9 @@ conda/
 wandb/
 demm/
 notes/
+fig/
+*models*/
+results/
 
 # exclude experiment scripts
 *.sh

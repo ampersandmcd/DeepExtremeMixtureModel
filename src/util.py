@@ -677,7 +677,7 @@ def compute_class_labels(y, threshes):
     1 means the sample is non-zero non-excess
     2 means the sample is excess
     """
-    y, threshes = m.to_np(y), m.to_np(threshes)
+    y, threshes = to_np(y), to_np(threshes)
     labels = np.ones_like(y)
     nans = np.isnan(y)
     y[nans] = 0
@@ -699,7 +699,7 @@ def pearsonr(a, b):
     """
     Computes pearson correlation between two tensors
     """
-    a, b = m.to_np(a), m.to_np(b)
+    a, b = to_np(a), to_np(b)
     mask = no_nans(a, b)
     return pearsonr(a.flatten(), b.flatten())[0]
 
@@ -708,7 +708,7 @@ def accuracy(a, b):
     """
     Computes portion of non-nan values where a and b match
     """
-    a, b = m.to_np(a), m.to_np(b)
+    a, b = to_np(a), to_np(b)
     nonan_mask = no_nans(a, b)
     return np.mean((a == b)[nonan_mask])
 
@@ -717,7 +717,7 @@ def f1(tru, pred):
     """
     Computes f1 micro and macro
     """
-    tru, pred = m.to_np(tru), m.to_np(pred)
+    tru, pred = to_np(tru), to_np(pred)
     nonan_mask = no_nans(tru, pred)
     micro = f1_score(tru[nonan_mask].flatten(), pred[nonan_mask].flatten(), average='micro')
     macro = f1_score(tru[nonan_mask].flatten(), pred[nonan_mask].flatten(), average='macro')
@@ -728,7 +728,7 @@ def auc(tru_labels, pred_probs):
     """
     Computes one versus one and one versus rest auc
     """
-    tru_labels, pred_probs = m.to_np(tru_labels), m.to_np(pred_probs)
+    tru_labels, pred_probs = to_np(tru_labels), to_np(pred_probs)
     tru_labels = tru_labels.flatten()
     nonans_mask = ~np.isnan(tru_labels)
     pred_probs = pred_probs.reshape([pred_probs.shape[0], -1]).transpose()
