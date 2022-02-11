@@ -151,35 +151,35 @@ if __name__ == "__main__":
     optim = torch.optim.Adam(st_model.parameters(), lr=args.lr)
     print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
     print(f"Starting training.")
-    # for batch in train_dataloader:
-    #     st_model.train()
-    #     x = batch["x"].type(torch.FloatTensor).to(device)
-    #     y = batch["y"].type(torch.FloatTensor).to(device)
-    #
-    #     # choose threshold
-    #     if st_model.variable_thresh:
-    #         # generate random thresholds in [0.5, 0.95] and augment predictors
-    #         threshes = 0.45 * torch.rand_like(y) + 0.5
-    #         x = torch.cat([x, threshes[:, np.newaxis].repeat(1, 1, x.shape[2], 1, 1)], axis=1)
-    #     else:
-    #         # generate fixed threshold but do not augment predictors
-    #         t = np.nanquantile(to_np(y), st_model.quantile)
-    #         threshes = torch.ones_like(y) * t
-    #
-    #     # apply appropriate forward pass (logic for each model type is handled in forward() definition
-    #     pred = st_model(x, threshes, test=False)
-    #
-    #     # compute loss and take optimizer step
-    #     loss, nll_loss, rmse_loss = st_model.compute_losses(pred, y, threshes)
-    #     loss.backward()
-    #     optim.step()  # loss[0] is the loss used for training other elements of loss are other
-    #     optim.zero_grad()
-    #     print("*" * 100)
-    #     print(i)
-    #     print("t_loss", loss)
-    #     print("t_nll_loss", nll_loss)
-    #     print("t_rmse_loss", rmse_loss)  # t for train
-    #     i += 1
+    for batch in train_dataloader:
+        st_model.train()
+        x = batch["x"].type(torch.FloatTensor).to(device)
+        y = batch["y"].type(torch.FloatTensor).to(device)
+
+        # choose threshold
+        if st_model.variable_thresh:
+            # generate random thresholds in [0.5, 0.95] and augment predictors
+            threshes = 0.45 * torch.rand_like(y) + 0.5
+            x = torch.cat([x, threshes[:, np.newaxis].repeat(1, 1, x.shape[2], 1, 1)], axis=1)
+        else:
+            # generate fixed threshold but do not augment predictors
+            t = np.nanquantile(to_np(y), st_model.quantile)
+            threshes = torch.ones_like(y) * t
+
+        # apply appropriate forward pass (logic for each model type is handled in forward() definition
+        pred = st_model(x, threshes, test=False)
+
+        # compute loss and take optimizer step
+        loss, nll_loss, rmse_loss = st_model.compute_losses(pred, y, threshes)
+        loss.backward()
+        optim.step()  # loss[0] is the loss used for training other elements of loss are other
+        optim.zero_grad()
+        print("*" * 100)
+        print(i)
+        print("t_loss", loss)
+        print("t_nll_loss", nll_loss)
+        print("t_rmse_loss", rmse_loss)  # t for train
+        i += 1
     print(f"Done training.")
 
     # run test batch
