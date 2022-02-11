@@ -136,9 +136,10 @@ if __name__ == "__main__":
         st_params["use_evt"] = True
         model_params = {
             "forecast_horizon": 1,
-            "ndim": (11, 29, 59),
+            "ndim": 11,
             "hdim": 10,
-            "odim": (2, 29, 59),    # y_hat and p_extreme in channel dimension
+            "odim": 2,    # y_hat and p_extreme in channel dimension
+            "spatial_dims": (29, 59),
             "window_size": 7,
             "memory_dim": 7,
             "context_size": 7

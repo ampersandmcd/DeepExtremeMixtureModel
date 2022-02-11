@@ -281,7 +281,7 @@ class SpatiotemporalModel(nn.Module):
         elif self.deterministic and self.use_evt:
             # Ding et al. model loss
             # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
-            point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
+            point_pred, excess_pred = pred[:, 0], pred[:, 1]
             excess_true = 1. * (y > self.effective_thresh(threshes))
             rmse_loss = torch_rmse(y, point_pred)
             beta_0, beta_1 = self.quantile, 1 - self.quantile
@@ -354,7 +354,7 @@ class SpatiotemporalModel(nn.Module):
         elif self.deterministic and self.use_evt:
             # Ding et al. model loss
             # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
-            point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
+            point_pred, excess_pred = pred[:, 0], pred[:, 1]
             excess_true = 1. * (y > self.effective_thresh(threshes))
             rmse_loss = torch_rmse(y, point_pred)
             beta_0, beta_1 = self.quantile, 1 - self.quantile
@@ -900,7 +900,7 @@ class ExtremeTime2(nn.Module):
     Pulled ExtremeTime2 directly from https://github.com/tymefighter/Forecast/blob/master/ts/model/extreme_time2.py
     """
 
-    def __init__(self, forecast_horizon, ndim, hdim, odim, window_size, memory_dim, context_size):
+    def __init__(self, forecast_horizon, ndim, hdim, odim, spatial_dims, window_size, memory_dim, context_size):
         """
         Initialize the model parameters and hyperparameters
         :param forecast_horizon: How much further in the future the model has to
@@ -924,15 +924,16 @@ class ExtremeTime2(nn.Module):
         self.ndim = ndim
         self.hdim = hdim
         self.odim = odim
+        self.spatial_dims = spatial_dims
         self.context_dim = context_size
         self.memory = None
         self.context = None
-        self.gru_input = nn.GRUCell(input_size=int(np.prod(self.ndim)), hidden_size=self.hdim)
-        self.gru_memory = nn.GRUCell(input_size=int(np.prod(self.ndim)), hidden_size=self.hdim)
-        self.gru_context = nn.GRUCell(input_size=int(np.prod(self.ndim)), hidden_size=self.context_dim)
+        self.gru_input = nn.GRUCell(input_size=self.ndim, hidden_size=self.hdim)
+        self.gru_memory = nn.GRUCell(input_size=self.ndim, hidden_size=self.hdim)
+        self.gru_context = nn.GRUCell(input_size=self.ndim, hidden_size=self.context_dim)
         final_weight_size = self.hdim + self.context_dim
         self.linear = nn.Linear(in_features=final_weight_size, out_features=int(np.prod(odim)))
-        self.b = nn.Linear(in_features=int(np.prod(odim))//2, out_features=int(np.prod(odim))//2, bias=False)
+        self.b = nn.Linear(in_features=1, out_features=1, bias=False)
 
     def forward(self, x, test=False):
         """
@@ -941,8 +942,10 @@ class ExtremeTime2(nn.Module):
         :param test: Ignore this. Added to match CNNConcreteDropout signature.
         :return: Forecast targets predicted by the model
         """
-        self.build_memory(x)
-        return self.predict_timestep(x)
+        reshaped = x.reshape((-1, self.ndim, self.window_size))     # (bhw, t, n)
+        self.build_memory(reshaped)
+        out = self.predict_timestep(reshaped)
+        return out.reshape(-1, self.odim, 1, *self.spatial_dims)     # (b, n, t, h, w)
 
     def build_memory(self, x):
         """
@@ -953,7 +956,7 @@ class ExtremeTime2(nn.Module):
         """
         self.memory = [None] * self.memory_dim
         self.context = [None] * self.memory_dim
-        b, c, length, h, w = x.shape
+        b, c, length = x.shape
 
         for i in range(self.memory_dim):
             tmax = np.random.randint(low=0, high=length)
@@ -970,12 +973,12 @@ class ExtremeTime2(nn.Module):
         :return: The final state after running on the window, it has shape (self.encoderStateSize,)
         """
         # apply to flattened (b, c, t=0, h, w) -> (b, chw)
-        gru_memory_state = self.gru_memory(x[:, :, 0].flatten(start_dim=1))
-        gru_context_state = self.gru_context(x[:, :, 0].flatten(start_dim=1))
+        gru_memory_state = self.gru_memory(x[:, :, 0])
+        gru_context_state = self.gru_context(x[:, :, 0])
 
         for t in range(1, tmax):
-            gru_memory_state = self.gru_memory(x[:, :, t].flatten(start_dim=1), gru_memory_state)
-            gru_context_state = self.gru_context(x[:, :, t].flatten(start_dim=1), gru_context_state)
+            gru_memory_state = self.gru_memory(x[:, :, t], gru_memory_state)
+            gru_context_state = self.gru_context(x[:, :, t], gru_context_state)
 
         return gru_memory_state, gru_context_state
 
@@ -986,17 +989,17 @@ class ExtremeTime2(nn.Module):
         :param current_time: Current Timestep
         :return: The predicted value on current timestep and the next state
         """
-        b, c, n, h, w = x.shape
-        embedding = self.gru_input(x[:, :, current_time].flatten(start_dim=1))      # (b, c, n, ht, w) -> (b, cnhw) @ (cnhw, hd) -> (b, hd)
-        attention_weights = self.compute_attention(embedding)       # (b, 1, n)
+        b, n, t = x.shape
+        embedding = self.gru_input(x[:, :, current_time])           # (b, n, t) @ (b, , hd) -> (b, hd)
+        attention_weights = self.compute_attention(embedding)       # (b, 1, t)
         con = self.context.permute(1, 0, 2)                         # (n, b, hd) -> (b, n, hd)
         weighted_context = (attention_weights @ con).squeeze()      # (b, 1, n) @ (b, n, hd) -> (b, 1, hd) -> (b, hd)
         concat_vector = torch.concat([embedding, weighted_context], dim=1)  # (b, hd) | (b, c) -> (b, hd+c)
         out = self.linear(concat_vector)                            # (b, hd+c) -> (b, cnhw)
-        o_tilde, u = out[:, :h*w], out[:, h*w:]                     # o_tilde and u from paper
+        o_tilde, u = out[:, [0]], out[:, [1]]                     # o_tilde and u from paper
         o = o_tilde + self.b(u)                                     # b.T @ u from paper
         o_and_u = torch.concat([o, u], dim=1)
-        o_and_u = o_and_u.reshape([b] + list(self.odim))            # (b, cnhw) -> (b, c, n, h, w)
+        o_and_u = o_and_u.reshape([b] + [self.odim])            # (b, cnhw) -> (b, c, n, h, w)
         return o_and_u
 
     def compute_attention(self, embedding):
