@@ -42,7 +42,7 @@ if __name__ == "__main__":
     parser = pl.Trainer.add_argparse_args(parser)
 
     # add model setup options
-    parser.add_argument("--model", default="bernoulli-lognormal-gp-variable", type=str, help="Model to train",
+    parser.add_argument("--model", default="ding", type=str, help="Model to train",
                         choices=[
                             "bernoulli-lognormal-gp-variable",  # proposed model with variable threshold
                             "bernoulli-lognormal-gp-fixed",     # proposed model with fixed threshold

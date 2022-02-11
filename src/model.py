@@ -423,8 +423,8 @@ class SpatiotemporalModel(nn.Module):
         elif self.deterministic and self.use_evt:
             # compute soft estimates
             point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
-            pred_zero = to_np(torch.where(point_pred == 0, 1, 0))
-            pred_excess = to_np(torch.where(point_pred != 0, 1, 0) * excess_pred)
+            pred_zero = to_np(torch.where(point_pred == 0, 1, 0))[:, 0]
+            pred_excess = to_np(torch.where(point_pred != 0, 1, 0) * excess_pred)[:, 0]
             pred_moderate = to_np(1 - pred_zero - pred_excess)
         else:
             # compute soft estimates
