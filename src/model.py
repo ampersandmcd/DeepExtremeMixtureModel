@@ -283,7 +283,7 @@ class SpatiotemporalModel(nn.Module):
             # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
             point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
             excess_true = 1. * (y > self.effective_thresh(threshes))
-            rmse_loss = torch_rmse(y.squeeze(), point_pred)
+            rmse_loss = torch_rmse(y, point_pred)
             beta_0, beta_1 = self.quantile, 1 - self.quantile
             nll_loss = torch.nanmean(
                 -beta_0 * (1 - excess_pred / self.ev_index)**self.ev_index * excess_true * torch.log(excess_pred) + \
@@ -356,7 +356,7 @@ class SpatiotemporalModel(nn.Module):
             # output (n, 2, h, w) of (predicted values, predicted probability of excesses)
             point_pred, excess_pred = pred[:, [0]], pred[:, [1]]
             excess_true = 1. * (y > self.effective_thresh(threshes))
-            rmse_loss = torch_rmse(y.squeeze(), point_pred)
+            rmse_loss = torch_rmse(y, point_pred)
             beta_0, beta_1 = self.quantile, 1 - self.quantile
             nll_loss = torch.nanmean(
                 -beta_0 * (1 - excess_pred / self.ev_index)**self.ev_index * excess_true * torch.log(excess_pred) + \

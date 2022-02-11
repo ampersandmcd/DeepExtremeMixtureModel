@@ -88,6 +88,7 @@ def torch_rmse(w_nans_l, w_nans_r):
     """
     Computes RMSE between two tensors while ignoring nans while preserving gradients
     """
+    w_nans_l, w_nans_r = w_nans_l.squeeze(), w_nans_r.squeeze()
     denan_l = torch.zeros_like(w_nans_l, device=get_device())
     denan_r = torch.zeros_like(w_nans_r, device=get_device())
     nonan_mask = ~torch.isnan(w_nans_l + w_nans_r)
